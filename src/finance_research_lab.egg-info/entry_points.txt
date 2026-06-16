@@ -1,0 +1,2 @@
+[console_scripts]
+finance-lab = finance_research_lab.cli:main

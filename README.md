@@ -1,0 +1,108 @@
+# finance-research-lab
+
+一个面向个人投资研究和作品集展示的轻量金融研究工具。第一版不做黑盒荐股、不做自动交易，先把“股票池管理 + 热点新闻追源 + Markdown 报告”跑通。
+
+## 目标
+
+`finance-research-lab` 解决三个问题：
+
+1. **股票池管理**：维护关注标的、主题、投资逻辑、风险点和跟踪状态。
+2. **热点新闻追源**：把热点新闻拆成来源、传播链、产业链、市场映射和后续验证点。
+3. **研究报告输出**：生成可放进 Obsidian / GitHub 的 Markdown 异动和追源报告。
+
+核心原则：
+
+- 只输出研究辅助和观察框架，不直接给确定性买卖结论。
+- 每条判断保留来源、规则和验证点。
+- 先做小而完整的本地工具，后续再扩展数据源、指标和回测。
+
+## 第一版 MVP
+
+```text
+输入：
+- data/watchlist.example.csv：关注股票池
+- 一条热点新闻标题/URL/关键词
+
+处理：
+- 读取股票池
+- 生成新闻追源卡片
+- 根据关键词做简单市场映射
+- 输出 Markdown 报告
+
+输出：
+- reports/YYYY-MM-DD-news-trace.md
+```
+
+## 项目结构
+
+```text
+finance-research-lab/
+  data/                         # 示例股票池 / 后续本地数据缓存
+  reports/                      # 生成的 Markdown 报告
+  src/finance_research_lab/
+    cli.py                      # 命令行入口
+    models.py                   # 核心数据结构
+    news_trace.py               # 热点新闻追源逻辑
+    report.py                   # Markdown 报告生成
+  tests/                        # 单元测试
+```
+
+## 快速开始
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+pytest
+```
+
+生成一份示例热点追源报告：
+
+```bash
+finance-lab trace-news   --headline "Microsoft raises AI data center capex guidance"   --source "example"   --watchlist data/watchlist.example.csv   --output reports/demo-news-trace.md
+```
+
+也可以不用安装脚本，直接运行模块：
+
+```bash
+PYTHONPATH=src python -m finance_research_lab.cli trace-news   --headline "稳定币监管框架推进，支付基础设施受关注"   --source "manual"   --watchlist data/watchlist.example.csv   --output reports/demo-news-trace.md
+```
+
+## 热点追源模板
+
+每条热点新闻按 7 个问题拆解：
+
+1. **新闻类型**：资本开支、订单/合同、业绩/指引、政策落地、价格/产能变化、并购/融资、产品发布、概念炒作。
+2. **谁付钱**：云厂商、政府、企业客户、消费者、交易所、协议、车企等。
+3. **谁收钱**：上游材料、设备、零部件、软件/SaaS、运营商、平台、数据服务、基础设施。
+4. **产业链路径**：例如 `AI CapEx -> 数据中心 -> GPU/ASIC -> 交换机 -> 光模块 -> PCB -> 液冷 -> 电力设备`。
+5. **市场映射**：区分直接受益、间接受益、情绪映射和伪相关。
+6. **当前阶段**：启动 / 验证 / 高潮 / 分歧 / 退潮。
+7. **动作状态**：忽略 / 放观察池 / 等验证 / 等回调 / 可小仓试 / 高潮勿追。
+
+## 后续路线
+
+### Phase 1：研究辅助
+
+- [x] 项目骨架和 README
+- [x] 示例股票池
+- [x] 热点新闻追源报告生成
+- [ ] 接入真实新闻 URL 抓取和来源时间线
+- [ ] 接入 Obsidian 关注股票池
+
+### Phase 2：数据与信号
+
+- [ ] AkShare / Tushare / yfinance 数据源适配
+- [ ] 涨跌幅、成交额变化、均线偏离、波动率、最大回撤
+- [ ] 每日 / 每周 Markdown 异动报告
+
+### Phase 3：回测验证
+
+- [ ] 双均线 / 动量 / 突破等基础策略
+- [ ] 手续费、滑点、调仓频率
+- [ ] 年化收益、Sharpe、最大回撤、胜率
+- [ ] 失败策略记录和复盘
+
+## 风险边界
+
+本项目只用于个人研究、学习和工程作品集展示，不构成投资建议。所有新闻、数据和市场映射都需要二次复核，尤其是社媒传闻、热点题材和已经充分发酵的交易。追源报告的重点是“看懂钱流和验证点”，不是制造追涨理由。

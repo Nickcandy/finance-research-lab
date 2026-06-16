@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local data / generated reports
+/data/*.csv
+!/data/watchlist.example.csv
+/reports/*.md
+!/reports/.gitkeep
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
