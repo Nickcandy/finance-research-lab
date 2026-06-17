@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
-from .news_trace import build_trace, load_watchlist
-from .report import render_news_trace
+from .workflow import run_news_trace_workflow
 
 
 def trace_news(args: argparse.Namespace) -> int:
-    watchlist = load_watchlist(args.watchlist)
-    trace = build_trace(args.headline, args.source, watchlist)
-    markdown = render_news_trace(trace)
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(markdown, encoding="utf-8")
-    print(f"wrote {output}")
+    run = run_news_trace_workflow(
+        headline=args.headline,
+        source=args.source,
+        watchlist_path=args.watchlist,
+        output_path=args.output,
+    )
+    for step in run.steps:
+        print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
+    if not run.steps or run.steps[-1].status == "error":
+        return 1
+    print(f"wrote {run.output_path}")
     return 0
 
 

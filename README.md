@@ -9,6 +9,7 @@
 1. **股票池管理**：维护关注标的、主题、投资逻辑、风险点和跟踪状态。
 2. **热点新闻追源**：把热点新闻拆成来源、传播链、产业链、市场映射和后续验证点。
 3. **研究报告输出**：生成可放进 Obsidian / GitHub 的 Markdown 异动和追源报告。
+4. **Agent 工作流雏形**：用 tools + workflow + agent steps 记录每次研究流程，后续可接 LLM / RAG / 回测。
 
 核心原则：
 
@@ -42,8 +43,12 @@ finance-research-lab/
   src/finance_research_lab/
     cli.py                      # 命令行入口
     models.py                   # 核心数据结构
+    agent_models.py             # Agent run / step / tool result 数据结构
+    tools.py                    # Agent 可调用工具封装
+    workflow.py                 # 代码控制的 Agent v0 工作流
     news_trace.py               # 热点新闻追源逻辑
     report.py                   # Markdown 报告生成
+  prompts/                      # Agent prompt 和输出约束
   tests/                        # 单元测试
 ```
 
@@ -66,6 +71,38 @@ finance-lab trace-news   --headline "Microsoft raises AI data center capex guida
 
 ```bash
 PYTHONPATH=src python -m finance_research_lab.cli trace-news   --headline "稳定币监管框架推进，支付基础设施受关注"   --source "manual"   --watchlist data/watchlist.example.csv   --output reports/demo-news-trace.md
+```
+
+## Agent v0 设计
+
+当前版本不是自由循环的黑盒 Agent，而是一个 **代码控制的 Agent-shaped workflow**：
+
+```text
+read_watchlist_tool
+→ trace_news_tool
+→ render_report_tool
+→ write_report_tool
+```
+
+每一步都会记录成 `AgentStep`，包含：
+
+```text
+step_name
+tool_name
+status
+summary
+```
+
+这样做的目的：
+
+- 先把工具调用、状态记录、报告生成跑通；
+- 后续可以把 `trace_news_tool` 的分类和产业链推理替换成 LLM function calling；
+- 再往后可以加入 `agent_runs / agent_steps` SQLite 表、RAG、行情数据和回测。
+
+Prompt 约束位于：
+
+```text
+prompts/investment_research_agent.md
 ```
 
 ## 热点追源模板
