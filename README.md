@@ -119,7 +119,8 @@ prompts/investment_research_agent.md
 
 ## MVP 路线
 
-详细版本见：[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md)
+- 产品文档：[`docs/product-spec-v0.md`](docs/product-spec-v0.md)
+- 路线文档：[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md)
 
 ```text
 V0 热点追源工具
