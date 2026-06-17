@@ -121,6 +121,7 @@ prompts/investment_research_agent.md
 
 - 产品文档：[`docs/product-spec-v0.md`](docs/product-spec-v0.md)
 - 路线文档：[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md)
+- 模型接入、上下文控制与 Tool Calling 架构：[`docs/model-and-tooling-architecture.md`](docs/model-and-tooling-architecture.md)
 
 ```text
 V0 热点追源工具
