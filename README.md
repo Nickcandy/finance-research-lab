@@ -117,6 +117,19 @@ prompts/investment_research_agent.md
 6. **当前阶段**：启动 / 验证 / 高潮 / 分歧 / 退潮。
 7. **动作状态**：忽略 / 放观察池 / 等验证 / 等回调 / 可小仓试 / 高潮勿追。
 
+## MVP 路线
+
+详细版本见：[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md)
+
+```text
+V0 热点追源工具
+→ V1 投资机会雷达日报
+→ V2 行情/成交量信号
+→ V3 信号回测
+→ V4 Agent 化工具调用 + 状态记录
+→ V5 作品集展示版
+```
+
 ## 后续路线
 
 ### Phase 1：研究辅助
