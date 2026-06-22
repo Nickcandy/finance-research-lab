@@ -20,7 +20,7 @@ Tool registry：负责定义可被模型调用的工具
 src/finance_research_lab/
   llm/
     base.py          # LLMClient 抽象接口
-    openai_client.py # OpenAI-compatible API
+    chat_completions_client.py # OpenAI-compatible API
     mock_client.py   # 测试用假模型
   agents/
     context.py       # 上下文预算、prompt 拼装、压缩
@@ -44,7 +44,7 @@ class LLMClient:
 后续不同模型只实现这个接口：
 
 ```text
-OpenAIClient
+ChatCompletionsClient
 ClaudeClient
 DeepSeekClient
 QwenClient

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from .models import NewsTrace, WatchlistItem
+from .models import ResearchReport, NewsTrace, StockImpact, ValidationTask, WatchlistItem
 
 
 def _format_items(items: list[WatchlistItem]) -> str:
@@ -12,6 +12,92 @@ def _format_items(items: list[WatchlistItem]) -> str:
         f"- {item.name}（{item.symbol}，{item.market}）：{'; '.join(item.themes)}"
         for item in items
     )
+
+
+def _format_stock_impacts(impacts: tuple[StockImpact, ...]) -> str:
+    if not impacts:
+        return "- 暂无明确映射，需要人工补充"
+
+    lines: list[str] = []
+    for impact in impacts:
+        themes = " / ".join(impact.themes) if impact.themes else "未标注主题"
+        evidence = "；".join(impact.evidence) if impact.evidence else "待补充"
+        risks = "；".join(impact.risks) if impact.risks else "待补充"
+        lines.extend(
+            [
+                f"- {impact.name}（{impact.symbol}，{impact.market}）："
+                f"{impact.impact_type} / {impact.impact_strength}",
+                f"  - 主题：{themes}",
+                f"  - 理由：{impact.reasoning or '待补充'}",
+                f"  - 证据：{evidence}",
+                f"  - 风险：{risks}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _format_validation_tasks(tasks: tuple[ValidationTask, ...]) -> str:
+    if not tasks:
+        return "- [ ] 暂无验证任务"
+    return "\n".join(f"- [ ] {task.question}（需要：{task.data_needed}）" for task in tasks)
+
+
+def render_research_report(report: ResearchReport, report_date: date | None = None) -> str:
+    report_date = report_date or date.today()
+    chain = " -> ".join(report.value_chain.chain_steps)
+    themes = " / ".join(report.event.themes) if report.event.themes else "待判断"
+    key_facts = "\n".join(f"- {fact}" for fact in report.event.key_facts) or "- 待补充"
+
+    return f"""# 研究报告：{report.raw_news.headline}
+
+> 生成日期：{report_date.isoformat()}
+> 来源：{report.raw_news.source}
+> 用途：研究辅助，不构成投资建议。
+
+## 1. 原始事件
+
+- 标题：{report.raw_news.headline}
+- 来源：{report.raw_news.source}
+- URL：{report.raw_news.url or '未提供'}
+- 发布时间：{report.raw_news.published_at or '未提供'}
+
+## 2. 事件理解
+
+- 事件类型：{report.event.event_type}
+- 主题：{themes}
+- 来源质量：{report.event.source_quality}
+- 置信度：{report.event.confidence}
+- 推理方式：{report.event.reasoning}
+
+### 关键事实
+
+{key_facts}
+
+## 3. 产业链路径
+
+- 谁付钱：{report.value_chain.payer}
+- 谁收钱：{report.value_chain.receiver}
+- 影响方向：{report.value_chain.impact_direction}
+- 产业链路径：`{chain}`
+- 推理方式：{report.value_chain.reasoning}
+
+## 4. 股票影响映射
+
+{_format_stock_impacts(report.stock_impacts)}
+
+## 5. 当前阶段
+
+- 阶段：{report.stage}
+- 动作状态：{report.action_state}
+
+## 6. 后续验证点
+
+{_format_validation_tasks(report.validation_tasks)}
+
+## 7. 备注
+
+这份报告只做事件追源和观察池整理。当前结果可能来自规则 fallback，后续需要由 Agent、工具和人工复核共同验证。
+"""
 
 
 def render_news_trace(trace: NewsTrace, report_date: date | None = None) -> str:

@@ -6,8 +6,7 @@ from .workflow import run_news_trace_workflow
 
 def trace_news(args: argparse.Namespace) -> int:
     run = run_news_trace_workflow(
-        headline=args.headline,
-        source=args.source,
+        url=args.url,
         watchlist_path=args.watchlist,
         output_path=args.output,
     )
@@ -24,8 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     trace = subparsers.add_parser("trace-news", help="Generate a Markdown news-trace report")
-    trace.add_argument("--headline", required=True, help="News headline, URL title, or hot topic")
-    trace.add_argument("--source", default="manual", help="Source name or URL")
+    trace.add_argument("--url", required=True, help="Static HTML news article URL")
     trace.add_argument("--watchlist", default="data/watchlist.example.csv", help="CSV watchlist path")
     trace.add_argument("--output", default="reports/news-trace.md", help="Output Markdown path")
     trace.set_defaults(func=trace_news)

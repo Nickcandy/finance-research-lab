@@ -8,6 +8,8 @@ __pycache__/
 .venv/
 venv/
 .codegraph/
+.env
+.env.local
 
 # Local data / generated reports
 /data/*.csv

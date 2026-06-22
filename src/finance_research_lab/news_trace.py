@@ -3,7 +3,16 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from .models import NewsTrace, WatchlistItem
+from .models import (
+    EventAnalysis,
+    NewsTrace,
+    RawNews,
+    ResearchReport,
+    StockImpact,
+    ValidationTask,
+    ValueChainTrace,
+    WatchlistItem,
+)
 
 THEME_KEYWORDS = {
     "AI": ["ai", "人工智能", "大模型", "算力", "gpu", "nvidia", "openai", "xai"],
@@ -108,3 +117,96 @@ def build_trace(headline: str, source: str, watchlist: list[WatchlistItem]) -> N
             "判断热度阶段：启动、验证、高潮、分歧或退潮",
         ],
     )
+
+
+def build_research_report(
+    news: RawNews,
+    watchlist: list[WatchlistItem],
+) -> ResearchReport:
+    themes = infer_themes(f"{news.headline} {news.body}")
+    payer, receiver, chain = _value_chain_for_themes(themes)
+
+    return ResearchReport(
+        raw_news=news,
+        event=EventAnalysis(
+            event_type=classify_news_type(f"{news.headline} {news.body}"),
+            themes=tuple(sorted(themes)),
+            key_facts=_key_facts_for_themes(themes),
+            source_quality="待复核",
+            confidence="low",
+            reasoning="基于标题关键词的规则 fallback，后续可替换为 Agent 结构化分析。",
+        ),
+        value_chain=ValueChainTrace(
+            payer=payer,
+            receiver=receiver,
+            chain_steps=tuple(chain),
+            impact_direction="positive" if themes else "unknown",
+            reasoning="基于已识别主题匹配内置产业链模板。",
+        ),
+        stock_impacts=tuple(_map_stock_impacts(themes, watchlist)),
+        validation_tasks=(
+            ValidationTask("找到最早官方来源或可靠媒体原文", "官方公告、监管文件或可靠媒体原文"),
+            ValidationTask("检查是否有真实订单、收入、资本开支或监管落地", "公告、财报、订单金额或政策原文"),
+            ValidationTask("观察相关标的成交额、公告、财报和板块持续性", "行情、成交额、公告和财报数据"),
+            ValidationTask("判断热度阶段：启动、验证、高潮、分歧或退潮", "价格位置、成交额变化和板块扩散情况"),
+        ),
+        stage="待判断",
+        action_state="放观察池",
+    )
+
+
+def _value_chain_for_themes(themes: set[str]) -> tuple[str, str, list[str]]:
+    if {"AI", "数据中心", "光模块"}.intersection(themes):
+        return (
+            "云厂商 / AI 平台 / 数据中心投资方",
+            "GPU、服务器、交换机、光模块、PCB、液冷、电力设备等供应链",
+            ["AI CapEx", "数据中心", "GPU/ASIC", "交换机", "光模块", "PCB", "液冷", "电力设备"],
+        )
+    if {"稳定币", "支付"}.intersection(themes):
+        return (
+            "交易所、支付公司、商户、用户、稳定币发行方",
+            "合规发行、托管、清结算、支付网关、链上基础设施",
+            ["监管框架", "稳定币发行", "托管/储备", "支付网关", "商户结算", "链上清结算"],
+        )
+    return "待人工判断", "待人工判断", ["新闻事件", "产业链", "标的映射", "验证点"]
+
+
+def _key_facts_for_themes(themes: set[str]) -> tuple[str, ...]:
+    if not themes:
+        return ("标题未命中内置主题，需要人工补充事件理解",)
+    return (f"标题命中主题：{'、'.join(sorted(themes))}",)
+
+
+def _map_stock_impacts(themes: set[str], watchlist: list[WatchlistItem]) -> list[StockImpact]:
+    impacts: list[StockImpact] = []
+    for item in watchlist:
+        overlap = themes.intersection(item.themes)
+        if len(overlap) >= 2:
+            impact_type = "direct"
+            strength = "high"
+            reasoning = "股票池主题与新闻主题重合度较高。"
+        elif len(overlap) == 1:
+            impact_type = "indirect"
+            strength = "medium"
+            reasoning = "股票池主题与新闻主题存在单一交集。"
+        elif any(theme.lower() in item.thesis.lower() for theme in themes):
+            impact_type = "sentiment"
+            strength = "low"
+            reasoning = "股票池关注逻辑提到新闻主题，但主题标签未直接匹配。"
+        else:
+            continue
+
+        impacts.append(
+            StockImpact(
+                symbol=item.symbol,
+                name=item.name,
+                market=item.market,
+                impact_type=impact_type,
+                impact_strength=strength,
+                themes=item.themes,
+                reasoning=reasoning,
+                evidence=(f"股票池主题：{' / '.join(item.themes) or '未标注主题'}",),
+                risks=(item.risks,) if item.risks else (),
+            )
+        )
+    return impacts

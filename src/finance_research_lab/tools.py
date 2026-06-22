@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .agent_models import ToolResult
-from .models import NewsTrace, WatchlistItem
-from .news_trace import build_trace, load_watchlist
-from .report import render_news_trace
+from .models import NewsTrace, RawNews, ResearchReport, WatchlistItem
+from .news_fetcher import UrlOpen as FetchUrlOpen
+from .news_fetcher import fetch_news
+from .news_trace import build_research_report, load_watchlist
+from .report import render_news_trace, render_research_report
+from .research_agent import analyze_research_report_with_agent
 
 
 def read_watchlist_tool(path: str | Path) -> ToolResult:
@@ -18,21 +22,46 @@ def read_watchlist_tool(path: str | Path) -> ToolResult:
     return ToolResult("read_watchlist", "success", items)
 
 
-def trace_news_tool(headline: str, source: str, watchlist: list[WatchlistItem]) -> ToolResult:
+def fetch_news_tool(url: str, *, urlopen: FetchUrlOpen | None = None) -> ToolResult:
+    """Fetch one static HTML news article as trusted Agent input."""
+
+    try:
+        news = fetch_news(url, **({"urlopen": urlopen} if urlopen is not None else {}))
+    except Exception as exc:  # pragma: no cover - defensive boundary for CLI usage
+        return ToolResult("fetch_news", "error", None, str(exc))
+    return ToolResult("fetch_news", "success", news)
+
+
+def trace_news_tool(
+    news: RawNews,
+    watchlist: list[WatchlistItem],
+    **agent_kwargs: Any,
+) -> ToolResult:
     """Convert a hot topic into a structured news trace."""
 
     try:
-        trace = build_trace(headline, source, watchlist)
-    except Exception as exc:  # pragma: no cover - defensive boundary for CLI usage
-        return ToolResult("trace_news", "error", None, str(exc))
+        trace = analyze_research_report_with_agent(
+            news,
+            watchlist,
+            **agent_kwargs,
+        )
+    except Exception as agent_exc:
+        try:
+            trace = build_research_report(news, watchlist)
+        except Exception as fallback_exc:  # pragma: no cover - defensive boundary for CLI usage
+            return ToolResult("trace_news", "error", None, str(fallback_exc))
+        return ToolResult("trace_news", "success", trace, f"agent fallback: {agent_exc}")
     return ToolResult("trace_news", "success", trace)
 
 
-def render_report_tool(trace: NewsTrace) -> ToolResult:
+def render_report_tool(trace: NewsTrace | ResearchReport) -> ToolResult:
     """Render a structured trace into Markdown."""
 
     try:
-        markdown = render_news_trace(trace)
+        if isinstance(trace, ResearchReport):
+            markdown = render_research_report(trace)
+        else:
+            markdown = render_news_trace(trace)
     except Exception as exc:  # pragma: no cover - defensive boundary for CLI usage
         return ToolResult("render_report", "error", "", str(exc))
     return ToolResult("render_report", "success", markdown)

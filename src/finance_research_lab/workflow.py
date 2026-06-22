@@ -4,7 +4,13 @@ from pathlib import Path
 from typing import Any
 
 from .agent_models import AgentRun, AgentStep, ToolResult
-from .tools import read_watchlist_tool, render_report_tool, trace_news_tool, write_report_tool
+from .tools import (
+    fetch_news_tool,
+    read_watchlist_tool,
+    render_report_tool,
+    trace_news_tool,
+    write_report_tool,
+)
 
 
 def _summarize_output(output: Any) -> str:
@@ -19,7 +25,12 @@ def _summarize_output(output: Any) -> str:
 
 
 def _step(step_name: str, result: ToolResult) -> AgentStep:
-    summary = result.error if result.status == "error" else _summarize_output(result.output)
+    if result.status == "error":
+        summary = result.error
+    elif result.error:
+        summary = f"{_summarize_output(result.output)}; {result.error}"
+    else:
+        summary = _summarize_output(result.output)
     return AgentStep(
         step_name=step_name,
         tool_name=result.tool_name,
@@ -29,8 +40,7 @@ def _step(step_name: str, result: ToolResult) -> AgentStep:
 
 
 def run_news_trace_workflow(
-    headline: str,
-    source: str,
+    url: str,
     watchlist_path: str | Path,
     output_path: str | Path,
 ) -> AgentRun:
@@ -44,12 +54,17 @@ def run_news_trace_workflow(
 
     steps: list[AgentStep] = []
 
+    fetch_result = fetch_news_tool(url)
+    steps.append(_step("fetch_news", fetch_result))
+    if fetch_result.status == "error":
+        return AgentRun("news_trace", steps, str(output_path))
+
     watchlist_result = read_watchlist_tool(watchlist_path)
     steps.append(_step("read_watchlist", watchlist_result))
     if watchlist_result.status == "error":
         return AgentRun("news_trace", steps, str(output_path))
 
-    trace_result = trace_news_tool(headline, source, watchlist_result.output)
+    trace_result = trace_news_tool(fetch_result.output, watchlist_result.output)
     steps.append(_step("trace_news", trace_result))
     if trace_result.status == "error":
         return AgentRun("news_trace", steps, str(output_path))
