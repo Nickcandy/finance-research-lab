@@ -70,11 +70,28 @@ pytest
 LLM_API_KEY=your_api_key_here
 LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
+LLM_RESPONSE_FORMAT=json_schema
+LLM_TIMEOUT_SECONDS=60
 ```
 
 `trace-news` 会优先尝试用兼容 OpenAI Chat Completions 的 Structured Outputs 生成严格的 `ResearchReport`。如果没有配置 key、LLM 请求失败、模型拒答、返回 JSON 解析失败或 schema 校验失败，会自动回退到本地规则 fallback，仍然生成 Markdown 报告。
 
-`LLM_BASE_URL` 可以填写任意兼容 OpenAI Chat Completions 且支持 JSON Schema Structured Outputs 的服务地址；代码会请求 `{LLM_BASE_URL}/chat/completions`。不配置时默认使用 OpenAI 官方地址。
+`LLM_BASE_URL` 可以填写任意兼容 OpenAI Chat Completions 的服务地址；代码会请求 `{LLM_BASE_URL}/chat/completions`。不配置时默认使用 OpenAI 官方地址。
+
+`LLM_RESPONSE_FORMAT` 控制结构化输出请求格式：
+
+- `json_schema`：默认值，用于支持 OpenAI JSON Schema Structured Outputs 的服务。
+- `json_object`：用于 DeepSeek 这类支持 JSON Output 但不支持 OpenAI `json_schema` 请求格式的服务。
+
+DeepSeek 示例：
+
+```env
+LLM_API_KEY=your_deepseek_key_here
+LLM_MODEL=deepseek-v4-pro
+LLM_BASE_URL=https://api.deepseek.com
+LLM_RESPONSE_FORMAT=json_object
+LLM_TIMEOUT_SECONDS=90
+```
 
 Structured Outputs 只能约束返回结构，不能保证投资结论正确；报告仍然只用于研究辅助，需要人工复核证据和风险。
 

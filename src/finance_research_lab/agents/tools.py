@@ -50,6 +50,8 @@ class ToolRegistry:
             output = tool.handler(**arguments)
         except Exception as exc:  # pragma: no cover - defensive boundary
             return ToolResult(name, "error", None, str(exc))
+        if isinstance(output, ToolResult):
+            return output
         return ToolResult(name, "success", output)
 
     def to_openai_tools(self) -> list[dict[str, Any]]:

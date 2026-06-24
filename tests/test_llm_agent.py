@@ -96,7 +96,7 @@ def _news() -> RawNews:
     )
 
 
-def test_analyze_research_report_with_agent_returns_structured_report() -> None:
+def test_analyze_research_report_with_agent_returns_structured_report(tmp_path) -> None:
     requests: list[object] = []
 
     def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
@@ -108,6 +108,7 @@ def test_analyze_research_report_with_agent_returns_structured_report() -> None:
         watchlist=[WatchlistItem("300308.SZ", "中际旭创", "A股", ("AI", "光模块"))],
         api_key="test-key",
         model="gpt-4o-mini",
+        env_path=tmp_path / "missing.env",
         urlopen=fake_urlopen,
     )
 
@@ -152,6 +153,53 @@ def test_chat_completions_client_reads_neutral_llm_config(tmp_path) -> None:
     assert client.api_key == "test-key"
     assert client.model == "test-model"
     assert client.base_url == "https://gateway.example.com/v1"
+    assert client.response_format == "json_schema"
+    assert client.timeout_seconds == 60
+
+
+def test_chat_completions_client_supports_deepseek_json_object_mode(tmp_path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "LLM_API_KEY=test-key\n"
+        "LLM_MODEL=deepseek-v4-pro\n"
+        "LLM_BASE_URL=https://api.deepseek.com\n"
+        "LLM_RESPONSE_FORMAT=json_object\n",
+        encoding="utf-8",
+    )
+    requests: list[object] = []
+
+    def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        requests.append((request, timeout))
+        return FakeHTTPResponse(_llm_payload(json.dumps(_report_payload())))
+
+    client = ChatCompletionsClient(env_path=env_path, urlopen=fake_urlopen)
+    response = client.structured_completion(
+        messages=[{"role": "system", "content": "output json"}, {"role": "user", "content": "{}"}],
+        schema_name="research_report",
+        schema={"type": "object"},
+    )
+
+    body = json.loads(requests[0][0].data.decode("utf-8"))
+    assert response.content
+    assert requests[0][0].full_url == "https://api.deepseek.com/chat/completions"
+    assert body["model"] == "deepseek-v4-pro"
+    assert body["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in body["response_format"]
+    assert "JSON Schema" in body["messages"][-1]["content"]
+    assert "required" in body["messages"][-1]["content"]
+
+
+def test_chat_completions_client_reads_timeout_config(tmp_path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "LLM_API_KEY=test-key\n"
+        "LLM_TIMEOUT_SECONDS=90\n",
+        encoding="utf-8",
+    )
+
+    client = ChatCompletionsClient(env_path=env_path)
+
+    assert client.timeout_seconds == 90
 
 
 @pytest.mark.parametrize(
