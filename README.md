@@ -1,46 +1,50 @@
 # finance-research-lab
 
-一个面向个人投资研究和作品集展示的轻量金融研究工具。第一版不做黑盒荐股、不做自动交易，先把“股票池管理 + 热点新闻追源 + Markdown 报告”跑通。
+一个面向个人投资研究和 AI Agent 作品集展示的本地研究工具。项目当前采用 URL-first 输入：从新闻 URL 或后续市场事件出发，拆解产业链影响，发现可能受影响的 A 股标的，并通过 tools 校验证据，最终生成可复盘的 Markdown 研究报告。
 
 ## 目标
 
-`finance-research-lab` 解决三个问题：
+`finance-research-lab` 解决五个问题：
 
-1. **股票池管理**：维护关注标的、主题、投资逻辑、风险点和跟踪状态。
-2. **热点新闻追源**：把热点新闻拆成来源、传播链、产业链、市场映射和后续验证点。
-3. **研究报告输出**：生成可放进 Obsidian / GitHub 的 Markdown 异动和追源报告。
-4. **Agent-ready 数据契约**：用 `ResearchReport` 固定事件理解、产业链、股票影响和验证任务，后续让 Agent 填同一套结构。
-5. **Agent 工作流雏形**：用 tools + workflow + agent steps 记录每次研究流程，后续可接 LLM / RAG / 回测。
+1. **事件理解**：从新闻 URL 中提取事实，判断事件类型、主题和来源质量。
+2. **产业链拆解**：分析谁付钱、谁收钱、影响路径和利多利空方向。
+3. **A股候选发现**：从事件出发发现可能受影响的 A 股，不把 watchlist 当作候选边界。
+4. **工具校验与报告输出**：通过 tools 校验公司、代码、主营和证据，生成 Markdown 研究报告。
+5. **Agent 工程展示**：用 workflow、tools、structured output、fallback 和 agent steps 展示一个可解释的 AI Agent 雏形。
 
 核心原则：
 
 - 只输出研究辅助和观察框架，不直接给确定性买卖结论。
 - 每条判断保留来源、规则和验证点。
-- 先做小而完整的本地工具，后续再扩展数据源、指标和回测。
+- LLM 负责提出假设和解释，tools 负责校验事实，workflow 负责记录过程。
+- `watchlist` 只是个人上下文、排序和复盘线索，不限制系统输出股票范围。
+- 先做小而完整的本地工具，后续再扩展 A 股数据源、行情指标和回测。
 
-## 第一版 MVP
+## 当前 MVP
 
 ```text
 输入：
-- data/watchlist.example.csv：关注股票池
-- 一条可直接访问的静态 HTML 新闻 URL
+- data/watchlist.example.csv：个人关注股票上下文
+- 一条或多条可直接访问的静态 HTML 新闻 URL
 
 处理：
 - 抓取新闻标题、来源、发布时间和正文
-- 读取股票池
+- 读取 watchlist 作为个人上下文
 - 生成新闻追源卡片
-- 根据关键词做简单市场映射
+- 根据 LLM 或规则做事件理解、产业链拆解和股票影响映射
 - 输出 Markdown 报告
 
 输出：
-- reports/YYYY-MM-DD-news-trace.md
+- reports/*.md
 ```
+
+当前实现已经包含 `trace-news`、`radar` 和 `research-agent` 三个 CLI 入口。下一阶段会把股票映射从 watchlist 限制升级为 A 股候选发现与 tool 校验。
 
 ## 项目结构
 
 ```text
 finance-research-lab/
-  data/                         # 示例股票池 / 后续本地数据缓存
+  data/                         # 示例 watchlist / 后续本地数据缓存
   reports/                      # 生成的 Markdown 报告
   src/finance_research_lab/
     cli.py                      # 命令行入口
@@ -95,16 +99,42 @@ LLM_TIMEOUT_SECONDS=90
 
 Structured Outputs 只能约束返回结构，不能保证投资结论正确；报告仍然只用于研究辅助，需要人工复核证据和风险。
 
+## 命令示例
+
 生成一份示例热点追源报告：
 
 ```bash
-finance-lab trace-news --url "https://example.com/news/article" --watchlist data/watchlist.example.csv --output reports/demo-news-trace.md
+finance-lab trace-news \
+  --url "https://example.com/news/article" \
+  --watchlist data/watchlist.example.csv \
+  --output reports/demo-news-trace.md
 ```
 
 也可以不用安装脚本，直接运行模块：
 
 ```bash
-PYTHONPATH=src python -m finance_research_lab.cli trace-news --url "https://example.com/news/article" --watchlist data/watchlist.example.csv --output reports/demo-news-trace.md
+PYTHONPATH=src python -m finance_research_lab.cli trace-news \
+  --url "https://example.com/news/article" \
+  --watchlist data/watchlist.example.csv \
+  --output reports/demo-news-trace.md
+```
+
+生成一份多 URL 投资雷达报告：
+
+```bash
+finance-lab radar \
+  --urls "https://example.com/news/a" "https://example.com/news/b" \
+  --watchlist data/watchlist.example.csv \
+  --output reports/demo-opportunity-radar.md
+```
+
+生成一份包含研究任务和证据的 Agent 报告：
+
+```bash
+finance-lab research-agent \
+  --url "https://example.com/news/article" \
+  --watchlist data/watchlist.example.csv \
+  --output reports/agent-report.md
 ```
 
 ## Agent v0 设计
@@ -112,11 +142,23 @@ PYTHONPATH=src python -m finance_research_lab.cli trace-news --url "https://exam
 当前版本不是自由循环的黑盒 Agent，而是一个 **代码控制的 Agent-shaped workflow**。真实 Agent 会优先输出 Agent-ready `ResearchReport`；失败时规则 fallback 会填充同一套结构：
 
 ```text
-fetch_news_tool          # 获取静态 HTML 并生成 RawNews
+fetch_news_tool        # 获取静态 HTML 并生成 RawNews
 → read_watchlist_tool
-→ trace_news_tool          # LLM Structured Outputs 优先，规则 fallback 保底
-→ render_report_tool       # 从 ResearchReport 渲染 Markdown
+→ trace_news_tool      # LLM Structured Outputs 优先，规则 fallback 保底
+→ render_report_tool   # 从 ResearchReport 渲染 Markdown
 → write_report_tool
+```
+
+后续 A 股候选发现会扩展为：
+
+```text
+fetch_news_tool
+→ analyze_event_with_llm
+→ discover_a_share_candidates
+→ verify_candidates_with_tools
+→ classify_impact
+→ render_report
+→ write_report
 ```
 
 每一步都会记录成 `AgentStep`，包含：
@@ -130,9 +172,10 @@ summary
 
 这样做的目的：
 
-- 先把工具调用、状态记录、报告生成跑通；
-- 用 JSON Schema 约束 Agent 输出，避免把自由文本直接塞进报告链路；
-- 再往后可以加入 `agent_runs / agent_steps` SQLite 表、RAG、行情数据和回测。
+- 先把工具调用、状态记录、报告生成跑通。
+- 用 JSON Schema 约束 Agent 输出，避免把自由文本直接塞进报告链路。
+- 让 LLM 提出研究假设，tools 校验事实，workflow 保留可解释执行轨迹。
+- 后续可以加入 `agent_runs / agent_steps` SQLite 表、RAG、A 股行情数据和回测。
 
 Prompt 约束位于：
 
@@ -148,9 +191,9 @@ prompts/investment_research_agent.md
 2. **谁付钱**：云厂商、政府、企业客户、消费者、交易所、协议、车企等。
 3. **谁收钱**：上游材料、设备、零部件、软件/SaaS、运营商、平台、数据服务、基础设施。
 4. **产业链路径**：例如 `AI CapEx -> 数据中心 -> GPU/ASIC -> 交换机 -> 光模块 -> PCB -> 液冷 -> 电力设备`。
-5. **市场映射**：区分直接受益、间接受益、情绪映射和伪相关。
+5. **A股影响映射**：区分利多、利空、直接受益、间接受益、情绪映射和伪相关。
 6. **当前阶段**：启动 / 验证 / 高潮 / 分歧 / 退潮。
-7. **动作状态**：忽略 / 放观察池 / 等验证 / 等回调 / 可小仓试 / 高潮勿追。
+7. **研究状态**：重点验证 / 进入跟踪 / 等待更多证据 / 风险偏高 / 暂不跟踪 / 伪相关排除 / 待确认。
 
 ## MVP 路线
 
@@ -159,23 +202,25 @@ prompts/investment_research_agent.md
 - 模型接入、上下文控制与 Tool Calling 架构：[`docs/model-and-tooling-architecture.md`](docs/model-and-tooling-architecture.md)
 
 ```text
-V0 热点追源工具
-→ V1 投资机会雷达日报
-→ V2 行情/成交量信号
-→ V3 信号回测
-→ V4 Agent 化工具调用 + 状态记录
-→ V5 作品集展示版
+V0 URL 新闻追源
+→ V1 A股候选发现与验证
+→ V2 多 URL 投资雷达
+→ V3 行情/成交量/财务工具
+→ V4 复盘与信号回测
+→ V5 AI Agent 简历展示版
 ```
 
 ## 后续路线
 
-### Phase 1：研究辅助
+### Phase 1：URL 研究辅助
 
 - [x] 项目骨架和 README
-- [x] 示例股票池
+- [x] 示例 watchlist
+- [x] 静态 HTML 新闻 URL 抓取
 - [x] 热点新闻追源报告生成
-- [ ] 接入真实新闻 URL 抓取和来源时间线
-- [ ] 接入 Obsidian 关注股票池
+- [x] 多 URL 雷达报告
+- [ ] A 股候选发现 tool
+- [ ] A 股候选校验和待确认候选分组
 
 ### Phase 2：数据与信号
 

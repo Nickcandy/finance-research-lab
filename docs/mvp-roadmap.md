@@ -1,118 +1,164 @@
-# 投资机会雷达 Agent MVP 路线
+# A股投资研究 Agent MVP 路线
 
-> 更新时间：2026-06-17
+> 更新时间：2026-06-30
 
 ## 项目定位
 
-`finance-research-lab` 的主线是 **市场分析与投资机会雷达 Agent**。
+`finance-research-lab` 的主线是 **URL-first 的 A 股投资研究 Agent**。
 
-它不是黑盒荐股系统，也不是自动交易系统，而是：
-
-> 新闻 / 行情 / 成交量 / 自选股 / 基本面 → 投资假设 → 支持证据与反对证据 → 动作建议 → 止损/证伪 → 复盘。
-
-核心产物是可复盘的 Markdown 研究报告和结构化信号记录。
-
-## MVP 演进路线
+它从新闻 URL 或后续市场数据出发，生成可复盘的投资研究假设：
 
 ```text
-V0 热点追源工具
-→ V1 投资机会雷达日报
-→ V2 行情/成交量信号
-→ V3 信号回测
-→ V4 Agent 化工具调用 + 状态记录
-→ V5 作品集展示版
+新闻 URL / 市场事件
+→ 事件理解
+→ 产业链影响
+→ A股候选发现
+→ tools 校验
+→ 利多 / 利空 / 情绪映射 / 伪相关
+→ 验证任务
+→ 复盘
 ```
 
-## V0：热点追源工具（当前已有）
+项目同时服务个人投资研究和 AI Agent 简历展示。核心不是“预测一定会涨”，而是展示如何让 LLM 提出假设、让 tools 查证事实、让 workflow 记录过程、让报告保留证据和风险。
 
-输入一条热点新闻和股票池，输出热点追源 Markdown 报告。
+## 路线总览
+
+```text
+V0 URL 新闻追源
+→ V1 A股候选发现与验证
+→ V2 多 URL 投资雷达
+→ V3 行情 / 成交量 / 财务工具
+→ V4 复盘与信号回测
+→ V5 AI Agent 简历展示版
+```
+
+## V0：URL 新闻追源（当前已有）
+
+目标：输入一条静态 HTML 新闻 URL，输出一份 Markdown 研究报告。
 
 当前能力：
 
-- 读取 `data/watchlist.example.csv`；
-- 识别主题和新闻类型；
-- 做简单产业链映射；
-- 把股票池标的分为直接受益、间接受益、情绪映射；
-- 生成 Markdown 报告；
+- 抓取新闻标题、来源、发布时间和正文。
+- 读取 watchlist 作为个人上下文。
+- 用 LLM Structured Outputs 或规则 fallback 生成 `ResearchReport`。
+- 输出事件理解、产业链路径、股票影响、风险和验证任务。
 - 记录 `AgentStep`。
 
-## V1：投资机会雷达日报（下一步）
+边界：
 
-目标：每天输出一份 `reports/YYYY-MM-DD-opportunity-radar.md`。
+- 不支持登录、付费墙和 JavaScript 动态渲染页面。
+- 当前股票映射仍偏 watchlist 和关键词规则，尚未具备全 A 股候选发现能力。
+
+## V1：A股候选发现与验证（下一步）
+
+目标：watchlist 不再限制输出范围。系统从新闻事件出发，发现可能受影响的 A 股标的，并通过 tools 校验。
+
+推荐流程：
+
+```text
+fetch_news_tool
+→ analyze_event_with_llm
+→ discover_a_share_candidates
+→ verify_candidates_with_tools
+→ classify_impact
+→ render_report
+→ write_report
+```
 
 输入：
 
 ```text
-3 条手动新闻
-自选股 CSV
-可选：指数/个股价格摘要
+新闻 URL
+watchlist CSV（可选个人上下文）
+A股 universe / 查询工具
 ```
 
-输出结构：
+输出分组：
+
+```text
+已校验 A股候选
+待确认候选
+伪相关 / 风险排除
+watchlist 命中
+后续验证任务
+```
+
+验收标准：
+
+- 候选股票可以来自 watchlist 之外。
+- 候选进入正式报告前必须经过 tool 校验。
+- 未校验候选只能进入“待确认候选”。
+- 报告明确区分利多、利空、情绪映射和伪相关。
+- 所有结论保留证据、风险和验证任务。
+
+## V2：多 URL 投资雷达
+
+目标：输入多条新闻 URL，输出每日投资研究雷达。
+
+报告结构：
 
 ```markdown
-# 今日投资机会雷达 YYYY-MM-DD
+# 今日 A股投资研究雷达 YYYY-MM-DD
 
-## 市场概览
-## 今日热点
-## 中长线观察
-## 短期交易机会
-## 高位不追 / 风险排除
-## 明天验证点
+## 今日核心事件
+## 已校验 A股候选
+## 待确认候选
+## 风险排除 / 伪相关
+## watchlist 命中
+## 明日验证任务
+## 待复盘记录
 ```
 
-动作分类：
+工程重点：
+
+- 每条 URL 独立记录成功或失败。
+- 单条失败不影响其他 URL。
+- 全部失败时不生成误导性报告。
+- 多条新闻提到同一股票时合并证据和风险。
+
+## V3：行情 / 成交量 / 财务工具
+
+目标：让候选验证不只依赖新闻和公司描述，还能接入市场状态。
+
+第一批工具：
 
 ```text
-中长线观察
-短期交易机会
-等回调
-小仓试错
-只看不动
-放弃
-风险排除
-高位不追
+fetch_a_share_profile(symbol)
+fetch_price_snapshot(symbol)
+fetch_volume_signal(symbol)
+fetch_basic_valuation(symbol)
 ```
-
-每个候选标的必须包含：
-
-```text
-核心逻辑
-催化剂
-支持证据
-反对证据
-当前价格状态
-建议动作
-止损/证伪条件
-时间退出
-复盘日期
-```
-
-## V2：行情和成交量信号
-
-接入 AKShare / BaoStock / yfinance 之一，先做简单、可解释的信号。
 
 第一批信号：
 
 ```text
-放量上涨：pct_chg > 5%，amount > 2 × rolling_20d_amount
-放量下跌：pct_chg < -5%，amount > 2 × rolling_20d_amount
-趋势突破：close 突破 20 日新高
-高位风险：近 20 日涨幅过大 + 成交额异常放大
+放量上涨
+放量下跌
+趋势突破
+高位风险
+估值异常
+近 20 日涨幅过大
 ```
 
 输出：
 
 ```text
-signals.csv 或 SQLite signals 表
-每日异动 Markdown 报告
+market_signals.csv 或 SQLite signals 表
+候选股票的市场状态摘要
+报告中的“价格状态 / 风险状态”
 ```
 
-## V3：信号回测
+## V4：复盘与信号回测
 
-回测问题：
+目标：把研究判断变成可验证的记录。
 
-> 某个信号出现后，未来 5/10/20 个交易日收益和回撤如何？
+核心问题：
+
+```text
+某条新闻触发的候选，在未来 5/10/20 个交易日表现如何？
+当时的利多 / 利空 / 风险判断是否成立？
+哪些类型的事件更容易变成伪相关？
+```
 
 指标：
 
@@ -122,70 +168,37 @@ future_return_10d
 future_return_20d
 max_drawdown_20d
 win_rate_10d
-win_rate_20d
 avg_return
-median_return
+false_positive_rate
 ```
 
-## V4：Agent 化工具调用和状态记录
-
-工具设计：
-
-```text
-read_watchlist(path) -> watchlist
-fetch_market_data(date, universe) -> market_snapshot
-detect_signals(market_snapshot) -> signals
-trace_news(headline_or_url, watchlist) -> news_trace
-rank_opportunities(signals, news_trace, watchlist) -> ranked_candidates
-render_report(candidates) -> markdown
-save_report(markdown) -> report_path
-save_agent_run(run) -> run_id
-```
-
-核心表：
+核心记录：
 
 ```text
 agent_runs
 agent_steps
-recommendations
-signals
+research_reports
+candidates
+validation_tasks
 reviews
+signals
 ```
 
-工程重点：
+## V5：AI Agent 简历展示版
 
-- workflow 由代码控制；
-- LLM 负责解释、分类、总结、报告生成；
-- Python 负责数据抓取、指标计算、回测；
-- 每次建议都要能复盘。
-
-## V5：作品集展示版
+目标：把项目整理成能用于面试讲解的完整案例。
 
 交付材料：
 
-- README；
-- 架构图；
-- 示例报告；
-- 数据表设计；
-- 一组信号回测结果；
-- 一个失败案例复盘；
+- README：产品定位、快速开始、示例报告。
+- 架构文档：workflow、tools、LLM adapter、schema、fallback。
+- 示例报告：单 URL、多 URL、候选校验、风险排除。
+- 数据表设计：agent_runs、agent_steps、candidates、reviews。
+- 一组复盘或回测结果。
 - 面试讲稿。
 
-简历表达：
+推荐面试表达：
 
 ```text
-投资机会雷达 Agent：构建面向个人投资研究的 AI Agent 系统，支持热点新闻追源、产业链映射、自选股匹配、行情异动检测、Markdown 报告生成和信号回测。采用代码控制的 workflow 记录 agent_runs / agent_steps，并通过规则信号与后续收益回测验证投资假设。
-```
-
-## 明天最小开发任务
-
-只做 V1：新增一个“投资机会雷达日报”命令。
-
-验收标准：
-
-```text
-输入 3 条手动新闻 + 股票池
-输出 reports/YYYY-MM-DD-opportunity-radar.md
-报告包含热点、候选标的、风险排除、明天验证点
-pytest 通过
+我做了一个 URL-first 的 A 股投资研究 Agent。系统不是让 LLM 直接荐股，而是让 LLM 提出事件假设和候选公司，再通过 tools 校验股票代码、主营、行业和市场数据。workflow 由代码控制，每一步记录 agent_steps，输出用 ResearchReport schema 约束，并保留 fallback、验证任务和复盘路径。这个项目展示了 Agent 工程里模型、工具、状态、结构化输出和可验证性的分工。
 ```

@@ -1,283 +1,206 @@
-# 投资机会雷达 Agent V0 产品文档
+# A股投资研究 Agent 产品文档
 
-> 更新时间：2026-06-17
+> 更新时间：2026-06-30
 
 ## 1. 一句话定位
 
-投资机会雷达 Agent 是一个面向个人投资研究的本地工具：用 Python 获取和计算数据，用大模型整理新闻与产业链逻辑，最终输出可复盘的投资假设和风险边界。
+`finance-research-lab` 是一个面向个人投资理财研究的本地 AI Agent 工具：从新闻 URL 或后续市场数据出发，识别事件、拆解产业链、发现可能受影响的 A 股标的，并用 tools 校验公司和证据，最终输出可复盘的 Markdown 研究报告。
 
-它不是自动交易系统，也不是简单喊买卖点，而是：
-
-```text
-新闻 / 公告 / 行情 / 成交量 / 基本面 / 自选股
-→ 事件识别
-→ 产业链映射
-→ 候选标的筛选
-→ 支持证据与反对证据
-→ 动作建议
-→ 止损/证伪/复盘
-```
-
-## 2. 第一版先做什么
-
-V0 只做一个能跑通的闭环：
+它不是自动交易系统，也不是黑盒荐股工具。它的目标是辅助个人研究：
 
 ```text
-输入：3 条手动新闻 + 自选股 CSV
-处理：追源、分类、映射、打标签
-输出：一份 Markdown 投资机会雷达报告
+新闻 URL / 市场事件
+→ 事件理解
+→ 产业链影响拆解
+→ A股候选发现
+→ tool 校验股票与主营相关性
+→ 利多 / 利空 / 情绪映射 / 伪相关分类
+→ 验证任务与复盘记录
 ```
 
-第一版先用手动新闻，先把研究流程和报告质量跑通。新闻自动抓取、真实行情、回测、数据库放到后面。
+## 2. 产品目标
 
-## 3. 第一版输入
+当前产品同时服务两个目标：
 
-### 3.1 新闻输入
+1. **个人投资研究**：帮助用户从新闻和市场事件中快速判断哪些 A 股公司可能受益、受损、只是情绪映射，或者属于伪相关。
+2. **AI Agent 简历项目**：展示一个真实可解释的 Agent 系统，而不是只写 prompt。项目要能讲清楚 workflow、tools、structured output、fallback、agent steps、后续 RAG/行情/回测扩展。
 
-可以先是命令行参数或文本文件：
+## 3. 核心原则
 
-```text
-1. 国常会提出推进人工智能基础设施建设
-2. 某云厂商提高 AI 数据中心资本开支指引
-3. 稳定币监管框架继续推进，支付基础设施受关注
+- **URL-first**：当前输入优先使用新闻 URL。暂不做大规模爬虫，不依赖动态页面抓取。
+- **A股优先**：第一阶段只覆盖 A 股候选发现与验证，后续再扩展港股、美股。
+- **watchlist 不是边界**：自选股只提供个人上下文、排序优先级和 thesis/risks，不限制系统输出范围。
+- **LLM 提假设，tools 做校验**：LLM 可以提出候选公司和影响路径，但正式报告必须区分已校验候选和待确认候选。
+- **研究辅助，不直接交易**：输出是研究状态、证据、风险和验证任务，不给确定性买卖结论。
+- **可复盘**：每条判断都要保留来源、理由、证据、风险和后续验证点。
+
+## 4. 第一阶段输入
+
+### 4.1 新闻 URL
+
+当前优先输入是一条或多条可直接访问的静态 HTML 新闻 URL：
+
+```bash
+finance-lab trace-news \
+  --url "https://example.com/news/article" \
+  --watchlist data/watchlist.example.csv \
+  --output reports/demo-news-trace.md
 ```
 
-每条新闻字段：
-
-```text
-headline: 新闻标题
-source: 来源，可先写 manual / x / 财联社 / 证券时报
-published_at: 发布时间，可选
-url: 原文链接，可选
-summary: 手动摘要，可选
+```bash
+finance-lab radar \
+  --urls "https://example.com/news/a" "https://example.com/news/b" \
+  --watchlist data/watchlist.example.csv \
+  --output reports/demo-opportunity-radar.md
 ```
 
-### 3.2 自选股输入
+限制：
 
-继续使用当前项目里的：
+- 页面必须能直接 GET 到 HTML。
+- 暂不支持登录、付费墙、反爬限制和 JavaScript 动态渲染。
+- 抓取失败时应记录失败 step，不把不完整内容伪装成分析结果。
 
-```text
-data/watchlist.example.csv
-```
+### 4.2 watchlist CSV
 
-字段至少包括：
+`data/watchlist.example.csv` 继续保留，但语义调整为“个人上下文”，不是候选股票全集。
+
+字段：
 
 ```text
 symbol,name,market,themes,thesis,risks
 ```
 
-## 4. 第一版输出
+用途：
 
-输出文件：
+- 命中自选股时在报告中高亮。
+- 给 LLM 和规则提供个人已知 thesis/risks。
+- 影响排序和复盘优先级。
+- 后续记录用户是否真的持续跟踪该标的。
 
-```text
-reports/YYYY-MM-DD-opportunity-radar.md
-```
+### 4.3 A股候选查询工具
 
-报告结构：
+第一阶段产品设计需要补一个 A 股查询 tool。它可以先是本地 CSV，也可以后续接外部数据源。
 
-```markdown
-# 今日投资机会雷达 YYYY-MM-DD
-
-## 1. 今日核心结论
-
-## 2. 热点事件追源
-
-## 3. 产业链映射
-
-## 4. 中长线观察
-
-## 5. 短期交易机会
-
-## 6. 高位不追 / 风险排除
-
-## 7. 明天验证点
-
-## 8. 待复盘记录
-```
-
-## 5. Agent 应该做成什么样
-
-第一版不是让大模型完全自由地“荐股”。更稳妥的结构是：
+目标输出：
 
 ```text
-Python workflow 控制流程
-Python tools 负责读取数据、计算信号、保存报告
-LLM 负责理解新闻、分类事件、解释产业链、写报告
+symbol
+name
+market
+industry
+business_summary
+concepts / themes
+source
 ```
 
-### 5.1 第一版 workflow
+## 5. 第一阶段输出
+
+输出 Markdown 研究报告，分为三类结果：
+
+1. **已校验 A股候选**：公司和代码存在，主营/行业/概念与事件有可解释关系。
+2. **待确认候选**：LLM 或规则提出了可能相关公司，但工具未能充分校验。
+3. **排除项 / 伪相关**：名字相似、概念蹭热点、主营关系弱、证据不足或风险明显。
+
+单条候选至少包含：
 
 ```text
-read_watchlist_tool
-→ read_news_input_tool
-→ trace_news_tool
-→ map_watchlist_tool
-→ rank_opportunities_tool
-→ render_report_tool
-→ write_report_tool
+股票代码与名称
+市场：A股
+影响方向：利多 / 利空 / 中性 / 待判断
+影响类型：direct / indirect / sentiment / negative / false_positive
+影响强度：high / medium / low / unknown
+核心逻辑
+支持证据
+反对证据或风险
+是否命中 watchlist
+验证任务
 ```
 
-### 5.2 第一版工具
+## 6. Agent 工作流
+
+当前项目不追求自由循环的黑盒 Agent，而是采用代码控制的 Agent workflow：
 
 ```text
-read_watchlist(path) -> watchlist
-read_news_input(path_or_args) -> news_items
-trace_news(news_items) -> traced_events
-map_watchlist(traced_events, watchlist) -> candidate_mappings
-rank_opportunities(candidate_mappings) -> opportunity_cards
-render_report(opportunity_cards) -> markdown
-write_report(markdown, output_path) -> report_path
+fetch_news_tool
+→ analyze_event_with_llm
+→ discover_a_share_candidates
+→ verify_candidates_with_tools
+→ classify_impact
+→ render_report
+→ write_report
 ```
 
-## 6. 大模型负责什么
+工程分工：
 
-LLM 适合做解释型任务：
+- **workflow**：控制流程顺序、错误处理和 agent step 记录。
+- **LLM**：理解新闻、提出产业链影响、生成候选假设、解释利多利空。
+- **tools**：抓取 URL、读取 watchlist、查询 A 股公司、校验主营/行业/概念、写报告。
+- **schema**：固定输出结构，避免自由文本直接进入核心链路。
+- **fallback**：LLM 不可用时，使用本地规则生成保底报告，但要标注可信度限制。
 
-1. 新闻摘要；
-2. 判断事件类型：政策、订单、业绩、产业趋势、涨价、监管、风险暴露；
-3. 推导产业链影响；
-4. 区分直接受益和蹭概念；
-5. 整理支持证据和反对证据；
-6. 输出 Markdown 报告；
-7. 后续复盘时解释当初判断哪里对、哪里错。
+## 7. 风险边界
 
-## 7. Python 负责什么
-
-Python 负责确定性任务：
-
-1. 读取 CSV / YAML / SQLite；
-2. 调数据源接口；
-3. 清洗行情字段；
-4. 计算涨跌幅、成交额、均线、回撤；
-5. 检测放量上涨、趋势突破等规则信号；
-6. 做 5/10/20 日收益回测；
-7. 保存 agent_runs、agent_steps、recommendations、reviews。
-
-## 8. 基础数据需要哪些
-
-### V0 必需
+报告不能把研究判断包装成确定性买卖建议。推荐使用这些状态词：
 
 ```text
-自选股：symbol、name、themes、thesis、risks
-新闻：headline、source、summary/url
+重点验证
+进入跟踪
+等待更多证据
+风险偏高
+暂不跟踪
+伪相关排除
+待确认
 ```
 
-### V1 增加
+避免把产品核心字段命名为：
 
 ```text
-行情：date、open、high、low、close、volume、amount、pct_chg
-```
-
-### V2 增加
-
-```text
-基本面：行业、市值、PE/PB/PS、营收增速、利润增速、ROE、现金流
-```
-
-### V3 增加
-
-```text
-历史建议：推荐日期、动作、理由、风险、价格、复盘日期、后续收益
-```
-
-## 9. 动作建议分类
-
-输出不要只有买/卖。第一版使用这些动作：
-
-```text
-中长线观察
-短期交易机会
-等回调
+买入
+卖出
 小仓试错
-只看不动
-放弃
-风险排除
-高位不追
+止损价
+保证收益
 ```
 
-每个候选标的都必须包含：
+如果需要表达交易相关内容，应放在“用户自行决策参考”的研究备注里，并明确需要二次验证。
+
+## 8. 当前已实现与缺口
+
+已实现：
+
+- URL 静态 HTML 抓取。
+- `trace-news` 单 URL 研究报告。
+- `radar` 多 URL 雷达报告。
+- `research-agent` 任务规划和证据报告雏形。
+- `ResearchReport` structured output 契约。
+- Chat Completions 兼容 LLM 接入和本地 fallback。
+- `AgentStep` 过程记录。
+
+尚未实现：
+
+- A 股候选发现 tool。
+- A 股公司校验数据源。
+- 候选分为“已校验 / 待确认 / 排除项”的正式报告结构。
+- 行情、成交量、财务、估值数据。
+- 持久化 agent_runs / agent_steps / reviews。
+- 回测和复盘闭环。
+
+## 9. 下一步最小任务
+
+下一步不再围绕“手动新闻 + 自选股全集”推进，而是做：
 
 ```text
-股票/方向：
-类型：中长线 / 事件驱动 / 短线交易
-核心逻辑：
-催化剂：
-支持证据：
-反对证据：
-当前价格状态：
-建议动作：
-止损/证伪条件：
-时间退出：
-复盘日期：
+URL 新闻
+→ A股候选发现
+→ tool 校验
+→ 标记 watchlist 命中
+→ 输出已校验候选 / 待确认候选 / 排除项
 ```
 
-## 10. 第一版开发任务
+验收标准：
 
-### Task 1：新闻输入文件
-
-新增：
-
-```text
-data/news.example.yaml
-```
-
-包含 3 条手动新闻。
-
-### Task 2：机会雷达数据模型
-
-新增模型：
-
-```text
-NewsItem
-TracedEvent
-OpportunityCard
-OpportunityRadarReport
-```
-
-### Task 3：日报 workflow
-
-新增命令：
-
-```bash
-finance-lab radar \
-  --news data/news.example.yaml \
-  --watchlist data/watchlist.example.csv \
-  --output reports/demo-opportunity-radar.md
-```
-
-### Task 4：报告渲染
-
-生成 Markdown 报告，包含热点、候选标的、风险排除、明天验证点。
-
-### Task 5：测试
-
-至少覆盖：
-
-```text
-能读取新闻 YAML
-能读取股票池
-能生成 OpportunityCard
-能写出 Markdown 报告
-workflow 步骤数正确
-```
-
-## 11. 暂时先放后面的能力
-
-这些能力重要，但放到 V1/V2：
-
-```text
-自动抓新闻
-AKShare/Tushare 行情接入
-财务指标
-SQLite 落库
-回测
-Web UI
-定时任务
-```
-
-## 12. 面试/作品集讲法
-
-```text
-我做了一个投资机会雷达 Agent。第一版不是黑盒预测股票，而是把新闻事件、自选股、产业链和行情信号组织成可复盘的投资假设。系统用 Python 做数据读取、信号计算和报告保存，用 LLM 做新闻理解、产业链映射和研究报告生成。每条建议都有支持证据、反对证据、止损/证伪条件和复盘日期，后续再用回测验证信号有效性。
-```
+- 输入一条可访问新闻 URL。
+- 系统能提出 A 股候选，并记录候选来源。
+- 候选必须经过 tool 校验；校验不足不能进入“已校验候选”。
+- watchlist 命中只影响高亮和上下文，不限制输出。
+- 报告仍然明确“不构成投资建议”。
