@@ -4,6 +4,7 @@ import csv
 from pathlib import Path
 
 from .models import (
+    AShareCompany,
     EventAnalysis,
     NewsTrace,
     RawNews,
@@ -43,6 +44,26 @@ def load_watchlist(path: str | Path) -> list[WatchlistItem]:
                 )
             )
     return items
+
+
+def load_a_share_universe(path: str | Path) -> list[AShareCompany]:
+    with Path(path).open(newline="", encoding="utf-8") as f:
+        rows = csv.DictReader(f)
+        companies: list[AShareCompany] = []
+        for row in rows:
+            themes = tuple(t.strip() for t in row.get("themes", "").split(";") if t.strip())
+            companies.append(
+                AShareCompany(
+                    symbol=row["symbol"].strip(),
+                    name=row["name"].strip(),
+                    market=row.get("market", "A股").strip(),
+                    industry=row.get("industry", "").strip(),
+                    themes=themes,
+                    business_summary=row.get("business_summary", "").strip(),
+                    source=row.get("source", "").strip(),
+                )
+            )
+    return companies
 
 
 def infer_themes(headline: str) -> set[str]:
@@ -122,9 +143,17 @@ def build_trace(headline: str, source: str, watchlist: list[WatchlistItem]) -> N
 def build_research_report(
     news: RawNews,
     watchlist: list[WatchlistItem],
+    a_share_universe: list[AShareCompany] | None = None,
+    proposed_impacts: tuple[StockImpact, ...] = (),
 ) -> ResearchReport:
     themes = infer_themes(f"{news.headline} {news.body}")
     payer, receiver, chain = _value_chain_for_themes(themes)
+    stock_impacts = _build_stock_impacts(
+        themes=themes,
+        watchlist=watchlist,
+        a_share_universe=a_share_universe,
+        proposed_impacts=proposed_impacts,
+    )
 
     return ResearchReport(
         raw_news=news,
@@ -143,7 +172,7 @@ def build_research_report(
             impact_direction="positive" if themes else "unknown",
             reasoning="基于已识别主题匹配内置产业链模板。",
         ),
-        stock_impacts=tuple(_map_stock_impacts(themes, watchlist)),
+        stock_impacts=tuple(stock_impacts),
         validation_tasks=(
             ValidationTask("找到最早官方来源或可靠媒体原文", "官方公告、监管文件或可靠媒体原文"),
             ValidationTask("检查是否有真实订单、收入、资本开支或监管落地", "公告、财报、订单金额或政策原文"),
@@ -152,6 +181,28 @@ def build_research_report(
         ),
         stage="待判断",
         action_state="放观察池",
+    )
+
+
+def verify_research_report_candidates(
+    report: ResearchReport,
+    watchlist: list[WatchlistItem],
+    a_share_universe: list[AShareCompany],
+) -> ResearchReport:
+    stock_impacts = _build_stock_impacts(
+        themes=set(report.event.themes),
+        watchlist=watchlist,
+        a_share_universe=a_share_universe,
+        proposed_impacts=report.stock_impacts,
+    )
+    return ResearchReport(
+        raw_news=report.raw_news,
+        event=report.event,
+        value_chain=report.value_chain,
+        stock_impacts=tuple(stock_impacts),
+        validation_tasks=report.validation_tasks,
+        stage=report.stage,
+        action_state=report.action_state,
     )
 
 
@@ -175,6 +226,41 @@ def _key_facts_for_themes(themes: set[str]) -> tuple[str, ...]:
     if not themes:
         return ("标题未命中内置主题，需要人工补充事件理解",)
     return (f"标题命中主题：{'、'.join(sorted(themes))}",)
+
+
+def _build_stock_impacts(
+    *,
+    themes: set[str],
+    watchlist: list[WatchlistItem],
+    a_share_universe: list[AShareCompany] | None,
+    proposed_impacts: tuple[StockImpact, ...],
+) -> list[StockImpact]:
+    if a_share_universe is None:
+        return list(proposed_impacts) or _map_stock_impacts(themes, watchlist)
+
+    watchlist_by_symbol = {item.symbol: item for item in watchlist}
+    universe_by_symbol = {company.symbol: company for company in a_share_universe}
+    impacts: list[StockImpact] = []
+    seen: set[str] = set()
+
+    for impact in proposed_impacts:
+        company = universe_by_symbol.get(impact.symbol)
+        if company is None:
+            impacts.append(_unverified_impact(impact))
+        else:
+            impacts.append(_verified_impact(company, themes, watchlist_by_symbol, impact))
+        seen.add(impact.symbol)
+
+    for company in a_share_universe:
+        if company.symbol in seen:
+            continue
+        impact = _impact_from_company(themes, company, watchlist_by_symbol)
+        if impact is None:
+            continue
+        impacts.append(impact)
+        seen.add(company.symbol)
+
+    return impacts
 
 
 def _map_stock_impacts(themes: set[str], watchlist: list[WatchlistItem]) -> list[StockImpact]:
@@ -207,6 +293,95 @@ def _map_stock_impacts(themes: set[str], watchlist: list[WatchlistItem]) -> list
                 reasoning=reasoning,
                 evidence=(f"股票池主题：{' / '.join(item.themes) or '未标注主题'}",),
                 risks=(item.risks,) if item.risks else (),
+                verification_status="verified",
+                verification_source="watchlist",
+                watchlist_hit=True,
             )
         )
     return impacts
+
+
+def _impact_from_company(
+    themes: set[str],
+    company: AShareCompany,
+    watchlist_by_symbol: dict[str, WatchlistItem],
+) -> StockImpact | None:
+    overlap = themes.intersection(company.themes)
+    if len(overlap) >= 2:
+        impact_type = "direct"
+        strength = "high"
+        reasoning = "A 股 universe 主题与新闻主题重合度较高。"
+    elif len(overlap) == 1:
+        impact_type = "indirect"
+        strength = "medium"
+        reasoning = "A 股 universe 主题与新闻主题存在单一交集。"
+    elif any(theme.lower() in company.business_summary.lower() for theme in themes):
+        impact_type = "sentiment"
+        strength = "low"
+        reasoning = "公司业务摘要提到新闻主题，但主题标签未直接匹配。"
+    else:
+        return None
+
+    watchlist_item = watchlist_by_symbol.get(company.symbol)
+    risks = (watchlist_item.risks,) if watchlist_item and watchlist_item.risks else ()
+    evidence = (
+        f"A 股 universe 主题匹配：{' / '.join(company.themes) or '未标注主题'}",
+        f"行业：{company.industry or '未提供'}",
+    )
+    return StockImpact(
+        symbol=company.symbol,
+        name=company.name,
+        market=company.market,
+        impact_type=impact_type,
+        impact_strength=strength,
+        themes=company.themes,
+        reasoning=reasoning,
+        evidence=evidence,
+        risks=risks,
+        verification_status="verified",
+        verification_source=company.source or "a_share_universe",
+        watchlist_hit=watchlist_item is not None,
+    )
+
+
+def _verified_impact(
+    company: AShareCompany,
+    themes: set[str],
+    watchlist_by_symbol: dict[str, WatchlistItem],
+    proposed: StockImpact,
+) -> StockImpact:
+    base = _impact_from_company(themes, company, watchlist_by_symbol)
+    if base is not None:
+        return base
+    watchlist_item = watchlist_by_symbol.get(company.symbol)
+    return StockImpact(
+        symbol=company.symbol,
+        name=company.name,
+        market=company.market,
+        impact_type=proposed.impact_type,
+        impact_strength=proposed.impact_strength,
+        themes=company.themes or proposed.themes,
+        reasoning=proposed.reasoning or "候选公司已在 A 股 universe 中校验，但相关性仍需补充。",
+        evidence=proposed.evidence + (f"A 股 universe 已确认公司：{company.name}",),
+        risks=proposed.risks,
+        verification_status="verified",
+        verification_source=company.source or "a_share_universe",
+        watchlist_hit=watchlist_item is not None,
+    )
+
+
+def _unverified_impact(impact: StockImpact) -> StockImpact:
+    return StockImpact(
+        symbol=impact.symbol,
+        name=impact.name,
+        market=impact.market,
+        impact_type=impact.impact_type,
+        impact_strength=impact.impact_strength,
+        themes=impact.themes,
+        reasoning=impact.reasoning,
+        evidence=impact.evidence,
+        risks=impact.risks,
+        verification_status="unverified",
+        verification_source="",
+        watchlist_hit=impact.watchlist_hit,
+    )

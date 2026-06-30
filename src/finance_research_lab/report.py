@@ -27,6 +27,8 @@ def _format_stock_impacts(impacts: tuple[StockImpact, ...]) -> str:
             [
                 f"- {impact.name}（{impact.symbol}，{impact.market}）："
                 f"{impact.impact_type} / {impact.impact_strength}",
+                f"  - 校验：{_verification_label(impact)}",
+                f"  - Watchlist：{'命中' if impact.watchlist_hit else '未命中'}",
                 f"  - 主题：{themes}",
                 f"  - 理由：{impact.reasoning or '待补充'}",
                 f"  - 证据：{evidence}",
@@ -34,6 +36,26 @@ def _format_stock_impacts(impacts: tuple[StockImpact, ...]) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def _verification_label(impact: StockImpact) -> str:
+    labels = {
+        "verified": "已校验",
+        "unverified": "待确认",
+        "excluded": "已排除",
+    }
+    label = labels.get(impact.verification_status, impact.verification_status)
+    if impact.verification_source:
+        return f"{label}（{impact.verification_source}）"
+    return label
+
+
+def _filter_impacts(impacts: tuple[StockImpact, ...], status: str) -> tuple[StockImpact, ...]:
+    return tuple(impact for impact in impacts if impact.verification_status == status)
+
+
+def _watchlist_hits(impacts: tuple[StockImpact, ...]) -> tuple[StockImpact, ...]:
+    return tuple(impact for impact in impacts if impact.watchlist_hit)
 
 
 def _format_validation_tasks(tasks: tuple[ValidationTask, ...]) -> str:
@@ -81,22 +103,34 @@ def render_research_report(report: ResearchReport, report_date: date | None = No
 - 产业链路径：`{chain}`
 - 推理方式：{report.value_chain.reasoning}
 
-## 4. 股票影响映射
+## 4. 已校验 A 股候选
 
-{_format_stock_impacts(report.stock_impacts)}
+{_format_stock_impacts(_filter_impacts(report.stock_impacts, "verified"))}
 
-## 5. 当前阶段
+## 5. 待确认候选
+
+{_format_stock_impacts(_filter_impacts(report.stock_impacts, "unverified"))}
+
+## 6. 风险排除 / 伪相关
+
+{_format_stock_impacts(_filter_impacts(report.stock_impacts, "excluded"))}
+
+## 7. Watchlist 命中
+
+{_format_stock_impacts(_watchlist_hits(report.stock_impacts))}
+
+## 8. 当前阶段
 
 - 阶段：{report.stage}
 - 动作状态：{report.action_state}
 
-## 6. 后续验证点
+## 9. 后续验证点
 
 {_format_validation_tasks(report.validation_tasks)}
 
-## 7. 备注
+## 10. 备注
 
-这份报告只做事件追源和观察池整理。当前结果可能来自规则 fallback，后续需要由 Agent、工具和人工复核共同验证。
+这份报告只做事件追源和候选校验整理。当前结果可能来自规则 fallback，后续需要由 Agent、工具和人工复核共同验证。
 """
 
 

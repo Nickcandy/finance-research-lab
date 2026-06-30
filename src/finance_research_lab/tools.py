@@ -4,10 +4,15 @@ from pathlib import Path
 from typing import Any
 
 from .agent_models import ToolResult
-from .models import NewsTrace, RawNews, ResearchReport, WatchlistItem
+from .models import AShareCompany, NewsTrace, RawNews, ResearchReport, WatchlistItem
 from .news_fetcher import UrlOpen as FetchUrlOpen
 from .news_fetcher import fetch_news
-from .news_trace import build_research_report, load_watchlist
+from .news_trace import (
+    build_research_report,
+    load_a_share_universe,
+    load_watchlist,
+    verify_research_report_candidates,
+)
 from .report import render_news_trace, render_research_report
 from .research_agent import analyze_research_report_with_agent
 
@@ -20,6 +25,16 @@ def read_watchlist_tool(path: str | Path) -> ToolResult:
     except Exception as exc:  # pragma: no cover - defensive boundary for CLI usage
         return ToolResult("read_watchlist", "error", [], str(exc))
     return ToolResult("read_watchlist", "success", items)
+
+
+def read_a_share_universe_tool(path: str | Path) -> ToolResult:
+    """Read the local A-share company universe as an Agent tool."""
+
+    try:
+        companies = load_a_share_universe(path)
+    except Exception as exc:  # pragma: no cover - defensive boundary for CLI usage
+        return ToolResult("read_a_share_universe", "error", [], str(exc))
+    return ToolResult("read_a_share_universe", "success", companies)
 
 
 def fetch_news_tool(url: str, *, urlopen: FetchUrlOpen | None = None) -> ToolResult:
@@ -35,6 +50,7 @@ def fetch_news_tool(url: str, *, urlopen: FetchUrlOpen | None = None) -> ToolRes
 def trace_news_tool(
     news: RawNews,
     watchlist: list[WatchlistItem],
+    a_share_universe: list[AShareCompany] | None = None,
     **agent_kwargs: Any,
 ) -> ToolResult:
     """Convert a hot topic into a structured news trace."""
@@ -47,10 +63,12 @@ def trace_news_tool(
         )
     except Exception as agent_exc:
         try:
-            trace = build_research_report(news, watchlist)
+            trace = build_research_report(news, watchlist, a_share_universe)
         except Exception as fallback_exc:  # pragma: no cover - defensive boundary for CLI usage
             return ToolResult("trace_news", "error", None, str(fallback_exc))
         return ToolResult("trace_news", "success", trace, f"agent fallback: {agent_exc}")
+    if a_share_universe is not None:
+        trace = verify_research_report_candidates(trace, watchlist, a_share_universe)
     return ToolResult("trace_news", "success", trace)
 
 

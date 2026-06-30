@@ -14,6 +14,7 @@ venv/
 # Local data / generated reports
 /data/*.csv
 !/data/watchlist.example.csv
+!/data/a_share_universe.example.csv
 /reports/*.md
 !/reports/.gitkeep
 

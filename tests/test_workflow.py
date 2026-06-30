@@ -35,12 +35,13 @@ def test_run_news_trace_workflow_records_agent_steps(
     assert [step.step_name for step in run.steps] == [
         "fetch_news",
         "read_watchlist",
+        "read_a_share_universe",
         "trace_news",
         "render_report",
         "write_report",
     ]
     assert all(step.status == "success" for step in run.steps)
-    assert "agent fallback" in run.steps[2].summary
+    assert "agent fallback" in run.steps[3].summary
     assert output.exists()
     markdown = output.read_text(encoding="utf-8")
     assert "## 2. 事件理解" in markdown
@@ -62,6 +63,29 @@ def test_run_news_trace_workflow_stops_on_missing_watchlist(tmp_path, monkeypatc
 
     assert [step.step_name for step in run.steps] == ["fetch_news", "read_watchlist"]
     assert run.steps[1].status == "error"
+    assert not output.exists()
+
+
+def test_run_news_trace_workflow_stops_on_missing_a_share_universe(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.fetch_news_tool",
+        lambda url: _successful_fetch(url),
+    )
+    output = tmp_path / "report.md"
+
+    run = run_news_trace_workflow(
+        url="https://news.example.com/ai-capex",
+        watchlist_path=_watchlist_csv(tmp_path),
+        a_share_universe_path=tmp_path / "missing-universe.csv",
+        output_path=output,
+    )
+
+    assert [step.step_name for step in run.steps] == [
+        "fetch_news",
+        "read_watchlist",
+        "read_a_share_universe",
+    ]
+    assert run.steps[2].status == "error"
     assert not output.exists()
 
 
@@ -90,6 +114,7 @@ def test_run_research_agent_workflow_writes_tasks_evidence_and_report(tmp_path, 
     assert [step.step_name for step in run.steps] == [
         "fetch_news",
         "read_watchlist",
+        "read_a_share_universe",
         "plan_research_tasks",
         "trace_news",
         "collect_evidence",

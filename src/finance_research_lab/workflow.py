@@ -11,11 +11,14 @@ from .radar_report import render_opportunity_radar
 from .research_planner import plan_research_tasks
 from .tools import (
     fetch_news_tool,
+    read_a_share_universe_tool,
     read_watchlist_tool,
     render_report_tool,
     trace_news_tool,
     write_report_tool,
 )
+
+DEFAULT_A_SHARE_UNIVERSE_PATH = "data/a_share_universe.example.csv"
 
 
 def _summarize_output(output: Any) -> str:
@@ -48,6 +51,7 @@ def run_news_trace_workflow(
     url: str,
     watchlist_path: str | Path,
     output_path: str | Path,
+    a_share_universe_path: str | Path = DEFAULT_A_SHARE_UNIVERSE_PATH,
 ) -> AgentRun:
     """Run the deterministic v0 Agent workflow for one news trace.
 
@@ -69,7 +73,16 @@ def run_news_trace_workflow(
     if watchlist_result.status == "error":
         return AgentRun("news_trace", steps, str(output_path))
 
-    trace_result = trace_news_tool(fetch_result.output, watchlist_result.output)
+    universe_result = read_a_share_universe_tool(a_share_universe_path)
+    steps.append(_step("read_a_share_universe", universe_result))
+    if universe_result.status == "error":
+        return AgentRun("news_trace", steps, str(output_path))
+
+    trace_result = trace_news_tool(
+        fetch_result.output,
+        watchlist_result.output,
+        universe_result.output,
+    )
     steps.append(_step("trace_news", trace_result))
     if trace_result.status == "error":
         return AgentRun("news_trace", steps, str(output_path))
@@ -89,6 +102,7 @@ def run_radar_workflow(
     urls: list[str],
     watchlist_path: str | Path,
     output_path: str | Path,
+    a_share_universe_path: str | Path = DEFAULT_A_SHARE_UNIVERSE_PATH,
 ) -> AgentRun:
     """Run the deterministic radar workflow for multiple news URLs."""
 
@@ -100,13 +114,22 @@ def run_radar_workflow(
     if watchlist_result.status == "error":
         return AgentRun("radar", steps, str(output_path))
 
+    universe_result = read_a_share_universe_tool(a_share_universe_path)
+    steps.append(_step("read_a_share_universe", universe_result))
+    if universe_result.status == "error":
+        return AgentRun("radar", steps, str(output_path))
+
     for url in urls:
         fetch_result = fetch_news_tool(url)
         steps.append(_step("fetch_news", fetch_result))
         if fetch_result.status == "error":
             continue
 
-        trace_result = trace_news_tool(fetch_result.output, watchlist_result.output)
+        trace_result = trace_news_tool(
+            fetch_result.output,
+            watchlist_result.output,
+            universe_result.output,
+        )
         steps.append(_step("trace_news", trace_result))
         if trace_result.status == "error":
             continue
@@ -135,6 +158,7 @@ def run_research_agent_workflow(
     url: str,
     watchlist_path: str | Path,
     output_path: str | Path,
+    a_share_universe_path: str | Path = DEFAULT_A_SHARE_UNIVERSE_PATH,
 ) -> AgentRun:
     """Run the minimal code-controlled AI research Agent workflow."""
 
@@ -151,13 +175,22 @@ def run_research_agent_workflow(
     if watchlist_result.status == "error":
         return AgentRun("research_agent", steps, str(output_path))
 
+    universe_result = read_a_share_universe_tool(a_share_universe_path)
+    steps.append(_step("read_a_share_universe", universe_result))
+    if universe_result.status == "error":
+        return AgentRun("research_agent", steps, str(output_path))
+
     tasks = plan_research_tasks(fetch_result.output, watchlist_result.output)
     plan_result = ToolResult("plan_research_tasks", "success", tasks)
     steps.append(_step("plan_research_tasks", plan_result))
 
     trace_result = registry.execute(
         "trace_news",
-        {"news": fetch_result.output, "watchlist": watchlist_result.output},
+        {
+            "news": fetch_result.output,
+            "watchlist": watchlist_result.output,
+            "a_share_universe": universe_result.output,
+        },
     )
     steps.append(_step("trace_news", trace_result))
     if trace_result.status == "error":
@@ -211,15 +244,28 @@ def _research_tool_registry() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
+            name="read_a_share_universe",
+            description="Read local A-share company universe.",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            handler=read_a_share_universe_tool,
+        )
+    )
+    registry.register(
+        ToolSpec(
             name="trace_news",
-            description="Convert news and watchlist into a ResearchReport.",
+            description="Convert news, watchlist, and A-share universe into a ResearchReport.",
             parameters={
                 "type": "object",
                 "properties": {
                     "news": {"type": "object"},
                     "watchlist": {"type": "array"},
+                    "a_share_universe": {"type": "array"},
                 },
-                "required": ["news", "watchlist"],
+                "required": ["news", "watchlist", "a_share_universe"],
             },
             handler=trace_news_tool,
         )

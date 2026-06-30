@@ -9,13 +9,13 @@ from .models import (
     StockImpact,
     ValidationTask,
     ValueChainTrace,
-    WatchlistItem,
 )
 
 STAGES = {"启动", "验证", "高潮", "分歧", "退潮", "待判断"}
 ACTION_STATES = {"忽略", "放观察池", "等验证", "等回调", "可小仓试", "高潮勿追", "待判断"}
 IMPACT_TYPES = {"direct", "indirect", "sentiment", "negative", "false_positive"}
 IMPACT_STRENGTHS = {"high", "medium", "low", "unknown"}
+VERIFICATION_STATUSES = {"verified", "unverified", "excluded"}
 VALIDATION_STATUSES = {"pending", "done", "blocked"}
 CONFIDENCES = {"high", "medium", "low", "unknown"}
 IMPACT_DIRECTIONS = {"positive", "negative", "mixed", "unknown"}
@@ -78,6 +78,12 @@ def research_report_json_schema() -> dict[str, Any]:
                         "reasoning": {"type": "string"},
                         "evidence": string_array,
                         "risks": string_array,
+                        "verification_status": {
+                            "type": "string",
+                            "enum": sorted(VERIFICATION_STATUSES),
+                        },
+                        "verification_source": {"type": "string"},
+                        "watchlist_hit": {"type": "boolean"},
                     }
                 ),
             },
@@ -97,11 +103,7 @@ def research_report_json_schema() -> dict[str, Any]:
     }
 
 
-def parse_research_report(
-    data: dict[str, Any],
-    *,
-    watchlist: list[WatchlistItem] | None = None,
-) -> ResearchReport:
+def parse_research_report(data: dict[str, Any]) -> ResearchReport:
     root = _object(data, "root")
     _require(root, "raw_news")
     _require(root, "event")
@@ -122,12 +124,6 @@ def parse_research_report(
         _parse_validation_task(_object(item, f"validation_tasks.{index}"), f"validation_tasks.{index}")
         for index, item in enumerate(_array(root["validation_tasks"], "validation_tasks"))
     )
-
-    if watchlist is not None:
-        allowed = {item.symbol for item in watchlist}
-        for impact in stock_impacts:
-            if impact.symbol not in allowed:
-                raise ValueError(f"Unknown watchlist symbol: {impact.symbol}")
 
     return ResearchReport(
         raw_news=raw_news,
@@ -202,6 +198,13 @@ def _parse_stock_impact(data: dict[str, Any], path: str) -> StockImpact:
         reasoning=_string(data.get("reasoning"), f"{path}.reasoning"),
         evidence=tuple(_string_array(data.get("evidence"), f"{path}.evidence")),
         risks=tuple(_string_array(data.get("risks"), f"{path}.risks")),
+        verification_status=_enum(
+            data.get("verification_status"),
+            f"{path}.verification_status",
+            VERIFICATION_STATUSES,
+        ),
+        verification_source=_string(data.get("verification_source"), f"{path}.verification_source"),
+        watchlist_hit=_bool(data.get("watchlist_hit"), f"{path}.watchlist_hit"),
     )
 
 
@@ -233,6 +236,12 @@ def _array(value: Any, path: str) -> list[Any]:
 def _string(value: Any, path: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"Expected string at {path}")
+    return value
+
+
+def _bool(value: Any, path: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"Expected bool at {path}")
     return value
 
 

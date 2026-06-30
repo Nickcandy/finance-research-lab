@@ -39,7 +39,7 @@ def analyze_research_report_with_agent(
         data = json.loads(response.content)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid ResearchReport JSON: {exc}") from exc
-    report = parse_research_report(data, watchlist=watchlist)
+    report = parse_research_report(data)
     return replace(report, raw_news=news)
 
 
@@ -49,7 +49,8 @@ def _build_messages(
 ) -> list[dict[str, str]]:
     system = (
         "你是投资研究结构化分析器。只输出符合 JSON Schema 的对象，不输出 Markdown、解释或代码块。"
-        "不要编造不在 watchlist 中的股票；stock_impacts 只能来自传入 watchlist。"
+        "可以提出可能相关的 A 股候选，但必须谨慎标注证据和不确定性。"
+        "watchlist 只是用户个人上下文，不是候选股票边界；最终候选会由 tools 校验。"
         "不确定的字段填“待判断”、“unknown”或空数组。"
         "输出仅用于研究辅助，不构成投资建议。"
     )

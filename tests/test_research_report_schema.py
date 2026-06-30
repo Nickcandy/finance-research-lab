@@ -1,6 +1,5 @@
 import pytest
 
-from finance_research_lab.models import WatchlistItem
 from finance_research_lab.research_report_schema import (
     parse_research_report,
     research_report_json_schema,
@@ -43,6 +42,9 @@ def _valid_payload() -> dict[str, object]:
                 "reasoning": "Watchlist themes match the event",
                 "evidence": ["Watchlist theme match"],
                 "risks": ["估值拥挤"],
+                "verification_status": "verified",
+                "verification_source": "test",
+                "watchlist_hit": True,
             }
         ],
         "validation_tasks": [
@@ -73,14 +75,13 @@ def test_research_report_json_schema_is_strict() -> None:
 
 
 def test_parse_research_report_accepts_valid_payload() -> None:
-    report = parse_research_report(
-        _valid_payload(),
-        watchlist=[WatchlistItem("300308.SZ", "中际旭创", "A股", ("AI", "光模块"))],
-    )
+    report = parse_research_report(_valid_payload())
 
     assert report.raw_news.headline == "AI capex increases"
     assert report.event.themes == ("AI", "数据中心")
     assert report.stock_impacts[0].symbol == "300308.SZ"
+    assert report.stock_impacts[0].verification_status == "verified"
+    assert report.stock_impacts[0].watchlist_hit is True
     assert report.validation_tasks[0].status == "pending"
 
 
@@ -100,11 +101,10 @@ def test_parse_research_report_rejects_invalid_enum() -> None:
         parse_research_report(payload)
 
 
-def test_parse_research_report_rejects_unknown_watchlist_symbol() -> None:
+def test_parse_research_report_accepts_non_watchlist_symbol_for_later_tool_verification() -> None:
     payload = _valid_payload()
+    payload["stock_impacts"][0]["symbol"] = "300502.SZ"
 
-    with pytest.raises(ValueError, match="Unknown watchlist symbol"):
-        parse_research_report(
-            payload,
-            watchlist=[WatchlistItem("601059.SH", "信达证券", "A股", ("券商",))],
-        )
+    report = parse_research_report(payload)
+
+    assert report.stock_impacts[0].symbol == "300502.SZ"

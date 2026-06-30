@@ -7,6 +7,7 @@ Stage = Literal["启动", "验证", "高潮", "分歧", "退潮", "待判断"]
 ActionState = Literal["忽略", "放观察池", "等验证", "等回调", "可小仓试", "高潮勿追", "待判断"]
 ImpactType = Literal["direct", "indirect", "sentiment", "negative", "false_positive"]
 ImpactStrength = Literal["high", "medium", "low", "unknown"]
+VerificationStatus = Literal["verified", "unverified", "excluded"]
 ValidationStatus = Literal["pending", "done", "blocked"]
 EvidenceSourceType = Literal["news", "watchlist", "stock_impact", "agent"]
 
@@ -19,6 +20,17 @@ class WatchlistItem:
     themes: tuple[str, ...] = field(default_factory=tuple)
     thesis: str = ""
     risks: str = ""
+
+
+@dataclass(frozen=True)
+class AShareCompany:
+    symbol: str
+    name: str
+    market: str
+    industry: str = ""
+    themes: tuple[str, ...] = field(default_factory=tuple)
+    business_summary: str = ""
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +89,9 @@ class StockImpact:
     reasoning: str = ""
     evidence: tuple[str, ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
+    verification_status: VerificationStatus = "verified"
+    verification_source: str = ""
+    watchlist_hit: bool = False
 
 
 @dataclass(frozen=True)

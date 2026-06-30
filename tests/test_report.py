@@ -63,6 +63,9 @@ def test_render_research_report_contains_agent_ready_sections() -> None:
                 reasoning="主题重合度较高",
                 evidence=("股票池主题：AI / 光模块",),
                 risks=("估值拥挤",),
+                verification_status="verified",
+                verification_source="test",
+                watchlist_hit=True,
             ),
         ),
         validation_tasks=(ValidationTask("查官方文件", "官方公告或可靠媒体原文"),),
@@ -76,6 +79,11 @@ def test_render_research_report_contains_agent_ready_sections() -> None:
     assert "## 2. 事件理解" in md
     assert "资本开支 / 产能扩张" in md
     assert "AI CapEx -> 数据中心 -> 光模块" in md
+    assert "## 4. 已校验 A 股候选" in md
+    assert "## 5. 待确认候选" in md
+    assert "## 7. Watchlist 命中" in md
     assert "中际旭创（300308.SZ，A股）" in md
     assert "direct / high" in md
+    assert "校验：已校验（test）" in md
+    assert "Watchlist：命中" in md
     assert "- [ ] 查官方文件（需要：官方公告或可靠媒体原文）" in md

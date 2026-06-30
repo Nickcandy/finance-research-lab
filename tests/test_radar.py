@@ -22,7 +22,7 @@ def test_run_radar_workflow_multiple_urls(tmp_path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "finance_research_lab.workflow.trace_news_tool",
-        lambda news, watchlist: ToolResult("trace_news", "success", _report(news)),
+        lambda news, watchlist, a_share_universe: ToolResult("trace_news", "success", _report(news)),
     )
     watchlist = _watchlist_csv(tmp_path)
     output = tmp_path / "radar.md"
@@ -50,7 +50,7 @@ def test_run_radar_workflow_one_url_fails(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("finance_research_lab.workflow.fetch_news_tool", fetch)
     monkeypatch.setattr(
         "finance_research_lab.workflow.trace_news_tool",
-        lambda news, watchlist: ToolResult("trace_news", "success", _report(news)),
+        lambda news, watchlist, a_share_universe: ToolResult("trace_news", "success", _report(news)),
     )
     output = tmp_path / "radar.md"
 
@@ -128,15 +128,15 @@ def test_radar_report_sections() -> None:
     markdown = render_opportunity_radar([long_term, short_term, risk], date(2026, 6, 24))
 
     assert "# 今日投资机会雷达 2026-06-24" in markdown
-    assert "## 3. 中长线观察\n- 中际旭创（300308.SZ，A股）" in markdown
-    assert "## 4. 短期交易机会\n- 中兴通讯（000063.SZ，A股）" in markdown
-    assert "## 5. 高位不追 / 风险排除\n- 信达证券（601059.SH，A股）" in markdown
+    assert "## 3. 已校验 A 股候选\n- 中际旭创（300308.SZ，A股）" in markdown
+    assert "中兴通讯（000063.SZ，A股）" in markdown
+    assert "## 5. 风险排除 / 伪相关\n- 信达证券（601059.SH，A股）" in markdown
     assert markdown.count("找到最早官方来源或可靠媒体原文") == 1
 
     empty = render_opportunity_radar([], date(2026, 6, 24))
-    assert "## 3. 中长线观察\n暂无" in empty
-    assert "## 4. 短期交易机会\n暂无" in empty
-    assert "## 5. 高位不追 / 风险排除\n暂无" in empty
+    assert "## 3. 已校验 A 股候选\n暂无" in empty
+    assert "## 4. 待确认候选\n暂无" in empty
+    assert "## 5. 风险排除 / 伪相关\n暂无" in empty
 
 
 def _watchlist_csv(tmp_path):

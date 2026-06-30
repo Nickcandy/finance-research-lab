@@ -9,6 +9,7 @@ def trace_news(args: argparse.Namespace) -> int:
         url=args.url,
         watchlist_path=args.watchlist,
         output_path=args.output,
+        a_share_universe_path=args.a_share_universe,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
@@ -23,6 +24,7 @@ def radar_cmd(args: argparse.Namespace) -> int:
         urls=args.urls,
         watchlist_path=args.watchlist,
         output_path=args.output,
+        a_share_universe_path=args.a_share_universe,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
@@ -37,6 +39,7 @@ def research_agent_cmd(args: argparse.Namespace) -> int:
         url=args.url,
         watchlist_path=args.watchlist,
         output_path=args.output,
+        a_share_universe_path=args.a_share_universe,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
@@ -53,18 +56,33 @@ def build_parser() -> argparse.ArgumentParser:
     trace = subparsers.add_parser("trace-news", help="Generate a Markdown news-trace report")
     trace.add_argument("--url", required=True, help="Static HTML news article URL")
     trace.add_argument("--watchlist", default="data/watchlist.example.csv", help="CSV watchlist path")
+    trace.add_argument(
+        "--a-share-universe",
+        default="data/a_share_universe.example.csv",
+        help="CSV A-share universe path",
+    )
     trace.add_argument("--output", default="reports/news-trace.md", help="Output Markdown path")
     trace.set_defaults(func=trace_news)
 
     radar = subparsers.add_parser("radar", help="Generate a daily opportunity radar report")
     radar.add_argument("--urls", nargs="+", required=True, help="Static HTML news article URLs")
     radar.add_argument("--watchlist", default="data/watchlist.example.csv", help="CSV watchlist path")
+    radar.add_argument(
+        "--a-share-universe",
+        default="data/a_share_universe.example.csv",
+        help="CSV A-share universe path",
+    )
     radar.add_argument("--output", default="reports/opportunity-radar.md", help="Output Markdown path")
     radar.set_defaults(func=radar_cmd)
 
     agent = subparsers.add_parser("research-agent", help="Generate a task/evidence Agent report")
     agent.add_argument("--url", required=True, help="Static HTML news article URL")
     agent.add_argument("--watchlist", default="data/watchlist.example.csv", help="CSV watchlist path")
+    agent.add_argument(
+        "--a-share-universe",
+        default="data/a_share_universe.example.csv",
+        help="CSV A-share universe path",
+    )
     agent.add_argument("--output", default="reports/agent-report.md", help="Output Markdown path")
     agent.set_defaults(func=research_agent_cmd)
     return parser

@@ -25,6 +25,7 @@ def test_radar_cli_accepts_multiple_urls_with_defaults() -> None:
 
     assert args.urls == ["https://news.example.com/one", "https://news.example.com/two"]
     assert args.watchlist == "data/watchlist.example.csv"
+    assert args.a_share_universe == "data/a_share_universe.example.csv"
     assert args.output == "reports/opportunity-radar.md"
 
 
@@ -35,6 +36,7 @@ def test_research_agent_cli_requires_url() -> None:
 
     assert args.url == "https://news.example.com/article"
     assert args.watchlist == "data/watchlist.example.csv"
+    assert args.a_share_universe == "data/a_share_universe.example.csv"
     assert args.output == "reports/agent-report.md"
 
 

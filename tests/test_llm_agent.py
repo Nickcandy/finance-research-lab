@@ -76,6 +76,9 @@ def _report_payload(reasoning: str = "Agent generated strict report") -> dict[st
                 "reasoning": "Agent impact reasoning",
                 "evidence": ["Watchlist match"],
                 "risks": ["估值拥挤"],
+                "verification_status": "unverified",
+                "verification_source": "",
+                "watchlist_hit": False,
             }
         ],
         "validation_tasks": [

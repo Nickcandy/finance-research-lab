@@ -22,19 +22,22 @@ def render_opportunity_radar(
 ## 2. 热点事件追源
 {_event_traces(reports)}
 
-## 3. 中长线观察
-{_format_candidates(_long_term_candidates(reports))}
+## 3. 已校验 A 股候选
+{_format_candidates(_verified_candidates(reports))}
 
-## 4. 短期交易机会
-{_format_candidates(_short_term_candidates(reports))}
+## 4. 待确认候选
+{_format_candidates(_unverified_candidates(reports))}
 
-## 5. 高位不追 / 风险排除
+## 5. 风险排除 / 伪相关
 {_format_candidates(_risk_candidates(reports))}
 
-## 6. 明天验证点
+## 6. Watchlist 命中
+{_format_candidates(_watchlist_hit_candidates(reports))}
+
+## 7. 明天验证点
 {_format_validation_tasks(_dedupe_validation_tasks(reports))}
 
-## 7. 待复盘记录
+## 8. 待复盘记录
 暂无
 """
 
@@ -75,21 +78,21 @@ def _event_traces(reports: list[ResearchReport]) -> str:
     return "\n\n".join(sections)
 
 
-def _long_term_candidates(reports: list[ResearchReport]) -> list[tuple[ResearchReport, StockImpact]]:
+def _verified_candidates(reports: list[ResearchReport]) -> list[tuple[ResearchReport, StockImpact]]:
     return [
         (report, impact)
         for report in reports
         for impact in report.stock_impacts
-        if impact.impact_type == "direct" and impact.impact_strength in {"high", "medium"}
+        if impact.verification_status == "verified"
     ]
 
 
-def _short_term_candidates(reports: list[ResearchReport]) -> list[tuple[ResearchReport, StockImpact]]:
+def _unverified_candidates(reports: list[ResearchReport]) -> list[tuple[ResearchReport, StockImpact]]:
     return [
         (report, impact)
         for report in reports
         for impact in report.stock_impacts
-        if report.stage in {"启动", "验证"} and report.action_state in {"可小仓试", "等回调"}
+        if impact.verification_status == "unverified"
     ]
 
 
@@ -98,9 +101,19 @@ def _risk_candidates(reports: list[ResearchReport]) -> list[tuple[ResearchReport
         (report, impact)
         for report in reports
         for impact in report.stock_impacts
-        if report.stage in {"高潮", "分歧"}
+        if impact.verification_status == "excluded"
+        or report.stage in {"高潮", "分歧"}
         or impact.impact_strength == "low"
         or report.action_state == "高潮勿追"
+    ]
+
+
+def _watchlist_hit_candidates(reports: list[ResearchReport]) -> list[tuple[ResearchReport, StockImpact]]:
+    return [
+        (report, impact)
+        for report in reports
+        for impact in report.stock_impacts
+        if impact.watchlist_hit
     ]
 
 
@@ -114,6 +127,8 @@ def _candidate_line(report: ResearchReport, impact: StockImpact) -> str:
     return (
         f"- {impact.name}（{impact.symbol}，{impact.market}）："
         f"{impact.impact_type} / {impact.impact_strength}；"
+        f"校验 {_verification_label(impact)}；"
+        f"Watchlist {'命中' if impact.watchlist_hit else '未命中'}；"
         f"阶段 {report.stage}；动作 {report.action_state}；"
         f"来源：{report.raw_news.headline}；理由：{impact.reasoning or '待补充'}"
     )
@@ -128,8 +143,21 @@ def _format_impacts(impacts: tuple[StockImpact, ...]) -> str:
 def _candidate_line_for_trace(impact: StockImpact) -> str:
     return (
         f"- {impact.name}（{impact.symbol}，{impact.market}）："
-        f"{impact.impact_type} / {impact.impact_strength}；{impact.reasoning or '待补充'}"
+        f"{impact.impact_type} / {impact.impact_strength}；"
+        f"校验 {_verification_label(impact)}；{impact.reasoning or '待补充'}"
     )
+
+
+def _verification_label(impact: StockImpact) -> str:
+    labels = {
+        "verified": "已校验",
+        "unverified": "待确认",
+        "excluded": "已排除",
+    }
+    label = labels.get(impact.verification_status, impact.verification_status)
+    if impact.verification_source:
+        return f"{label}（{impact.verification_source}）"
+    return label
 
 
 def _dedupe_validation_tasks(reports: list[ResearchReport]) -> list[ValidationTask]:
