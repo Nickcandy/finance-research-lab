@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from .a_share_universe import sync_a_share_universe_from_akshare
 from .workflow import run_news_trace_workflow, run_radar_workflow, run_research_agent_workflow
 
 
@@ -49,6 +51,18 @@ def research_agent_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def sync_a_share_universe_cmd(args: argparse.Namespace) -> int:
+    if args.source != "akshare":
+        raise ValueError(f"unsupported A-share universe source: {args.source}")
+    try:
+        companies = sync_a_share_universe_from_akshare(args.output)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {args.output} ({len(companies)} companies)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Finance research lab CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -85,6 +99,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent.add_argument("--output", default="reports/agent-report.md", help="Output Markdown path")
     agent.set_defaults(func=research_agent_cmd)
+
+    sync_universe = subparsers.add_parser(
+        "sync-a-share-universe",
+        help="Fetch A-share basics and write the local universe CSV",
+    )
+    sync_universe.add_argument("--source", default="akshare", choices=["akshare"], help="Data source")
+    sync_universe.add_argument(
+        "--output",
+        default="data/a_share_universe.csv",
+        help="Output CSV A-share universe path",
+    )
+    sync_universe.set_defaults(func=sync_a_share_universe_cmd)
     return parser
 
 

@@ -15,6 +15,7 @@ venv/
 /data/*.csv
 !/data/watchlist.example.csv
 !/data/a_share_universe.example.csv
+!/data/a_share_universe.csv
 /reports/*.md
 !/reports/.gitkeep
 
