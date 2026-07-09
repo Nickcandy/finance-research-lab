@@ -41,6 +41,7 @@ def load_watchlist(path: str | Path) -> list[WatchlistItem]:
                     themes=themes,
                     thesis=row.get("thesis", "").strip(),
                     risks=row.get("risks", "").strip(),
+                    industry=(row.get("industry") or row.get("sector") or "").strip(),
                 )
             )
     return items

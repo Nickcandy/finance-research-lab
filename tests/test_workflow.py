@@ -115,8 +115,13 @@ def test_run_research_agent_workflow_writes_tasks_evidence_and_report(tmp_path, 
         "fetch_news",
         "read_watchlist",
         "read_a_share_universe",
+        "classify_event",
+        "build_evidence_plan",
         "plan_research_tasks",
         "trace_news",
+        "fetch_company_evidence",
+        "fetch_market_evidence",
+        "score_value_chain",
         "collect_evidence",
         "render_agent_report",
         "write_report",
@@ -125,6 +130,11 @@ def test_run_research_agent_workflow_writes_tasks_evidence_and_report(tmp_path, 
     markdown = output.read_text(encoding="utf-8")
     assert "## Agent 执行摘要" in markdown
     assert "## 研究任务" in markdown
+    assert "## Evidence-first 研究计划" in markdown
+    assert "### 事件类型" in markdown
+    assert "### 证据计划" in markdown
+    assert "### 上下游 scale" in markdown
+    assert "### 市场反应" in markdown
     assert "## 证据列表" in markdown
     assert "https://news.example.com/ai-capex" in markdown
     assert "中际旭创" in markdown

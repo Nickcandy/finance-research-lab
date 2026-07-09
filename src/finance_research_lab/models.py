@@ -9,7 +9,32 @@ ImpactType = Literal["direct", "indirect", "sentiment", "negative", "false_posit
 ImpactStrength = Literal["high", "medium", "low", "unknown"]
 VerificationStatus = Literal["verified", "unverified", "excluded"]
 ValidationStatus = Literal["pending", "done", "blocked"]
-EvidenceSourceType = Literal["news", "watchlist", "stock_impact", "agent"]
+EvidenceSourceType = Literal[
+    "news",
+    "watchlist",
+    "stock_impact",
+    "agent",
+    "company_announcement",
+    "financial_report",
+    "market_snapshot",
+]
+EventType = Literal[
+    "订单 / 合同",
+    "业绩 / 指引",
+    "政策 / 监管",
+    "涨价 / 供需",
+    "资本开支",
+    "产品发布",
+    "风险暴露",
+    "纯情绪题材",
+    "待判断",
+]
+EvidenceTool = Literal[
+    "company_announcements",
+    "financial_reports",
+    "market_snapshot",
+    "value_chain",
+]
 
 
 @dataclass(frozen=True)
@@ -20,6 +45,7 @@ class WatchlistItem:
     themes: tuple[str, ...] = field(default_factory=tuple)
     thesis: str = ""
     risks: str = ""
+    industry: str = ""
 
 
 @dataclass(frozen=True)
@@ -119,6 +145,67 @@ class Evidence:
 
 
 @dataclass(frozen=True)
+class EventClassification:
+    event_type: EventType
+    candidate_symbols: tuple[str, ...] = field(default_factory=tuple)
+    confidence: str = "low"
+    reasoning: str = ""
+
+
+@dataclass(frozen=True)
+class EvidencePlan:
+    event_type: EventType
+    candidate_symbols: tuple[str, ...] = field(default_factory=tuple)
+    required_tools: tuple[EvidenceTool, ...] = field(default_factory=tuple)
+    questions: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class CompanyAnnouncement:
+    symbol: str
+    title: str
+    announcement_type: str
+    published_at: str
+    url: str = ""
+    summary: str = ""
+
+
+@dataclass(frozen=True)
+class FinancialSnapshot:
+    symbol: str
+    report_period: str
+    revenue: float | None = None
+    revenue_yoy: float | None = None
+    net_profit: float | None = None
+    net_profit_yoy: float | None = None
+    gross_margin: float | None = None
+    operating_cash_flow: float | None = None
+
+
+@dataclass(frozen=True)
+class MarketSnapshot:
+    symbol: str
+    trade_date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    pct_chg: float
+    volume: float
+    amount: float
+    lookback_days: int
+
+
+@dataclass(frozen=True)
+class ValueChainScore:
+    symbol: str
+    upstream_relevance_score: int
+    downstream_relevance_score: int
+    revenue_elasticity_score: int
+    reasoning: str = ""
+
+
+@dataclass(frozen=True)
 class ResearchReport:
     raw_news: RawNews
     event: EventAnalysis
@@ -134,3 +221,9 @@ class ResearchAgentResult:
     tasks: tuple[ResearchTask, ...]
     evidence: tuple[Evidence, ...]
     report: ResearchReport
+    classification: EventClassification | None = None
+    evidence_plan: EvidencePlan | None = None
+    company_announcements: tuple[CompanyAnnouncement, ...] = field(default_factory=tuple)
+    financial_snapshots: tuple[FinancialSnapshot, ...] = field(default_factory=tuple)
+    market_snapshots: tuple[MarketSnapshot, ...] = field(default_factory=tuple)
+    value_chain_scores: tuple[ValueChainScore, ...] = field(default_factory=tuple)
