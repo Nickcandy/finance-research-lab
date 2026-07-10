@@ -247,7 +247,8 @@ V0 URL 新闻追源（辅助入口）
 ### Phase 2：自动事件发现
 
 - [ ] `NewsItem` / `MarketEvent` / `Theme` 模型
-- [ ] 一个可信事件源和最近 24 小时拉取
+- [ ] AkShare 同花顺财经直播源和最近 24 小时本地事件窗口
+- [ ] 巨潮最新公告、全市场行情异动和官方政策 source adapters
 - [ ] 事件去重、聚类和热点排序
 - [ ] Event-driven `daily-radar.md`
 - [ ] Serenity 产业链层级与供给卡点分析

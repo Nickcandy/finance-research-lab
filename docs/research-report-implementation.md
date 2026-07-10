@@ -512,6 +512,85 @@ AI 思考 -> 调工具 -> 看结果 -> 再思考 -> 再调工具 -> 最终输出
 6. 接入 Serenity 式卡点分析
    先排产业链层级和难扩产、难替代的环节，再排公司，并输出证据强度、反方理由和判断降级条件。
 
+### 14.1 事件源实现方案
+
+事件发现不等于让模型自由浏览网页。系统维护已审核的 `EventSource` registry，每个 adapter 负责抓取、
+字段映射和源级错误，统一输出 `NewsItem`：
+
+```python
+class EventSource(Protocol):
+    name: str
+
+    def fetch(
+        self,
+        since: datetime,
+        until: datetime,
+    ) -> tuple[NewsItem, ...]: ...
+```
+
+#### 财经新闻
+
+第一版实现 `AkShareThsNewsSource`，调用 `stock_info_global_ths()`，映射标题、内容、发布时间和链接。
+接口只返回最近 20 条，必须每 5-10 分钟运行并写入本地事件缓存，才能拼出最近 24 小时窗口。
+`stock_info_global_futu()` 作为网络失败 fallback；`stock_info_global_cls(symbol="全部")` 缺少稳定的
+原文 URL 字段，只用于交叉确认，不作为唯一事件证据。
+
+长期方案可接 Tushare `major_news`，它支持 `start_date` / `end_date` 和多家来源，但需要单独开通权限。
+
+#### 公司公告
+
+新增 `CninfoLatestAnnouncementSource` 拉取巨潮资讯最新公告列表，用类别和标题筛选日常经营、业绩预告、
+风险提示、股权变动、并购和回购等事件。当前
+`stock_zh_a_disclosure_report_cninfo(symbol, ...)` 必须传股票代码，因此继续负责热点候选验证，不用于
+遍历全部 A 股。形成明确的两层结构：
+
+```text
+发现：巨潮最新公告列表
+验证：AkShare 单股巨潮公告接口
+```
+
+#### 行情异动
+
+原型使用 `stock_zh_a_spot()` 低频拉取新浪沪深京全市场快照，读取涨跌幅、成交量和成交额；文档提示
+重复运行可能导致临时封 IP，因此只允许收盘后运行一次，或盘中至少间隔 30 分钟。东方财富
+`stock_zh_a_spot_em()` 虽然提供量比和换手率，但不作为主源，避免重复当前代理断开问题。
+
+正式方案优先使用 Tushare `daily(trade_date=...)` 单日全市场数据。无论使用哪个发现源，BaoStock 都只
+验证 Top 候选的最近日线，不负责遍历全市场。第一版异动条件保持确定性：
+
+```text
+abs(pct_chg) >= 5%
+或成交额进入全市场前 100
+或当日成交量 / 过去 5 日平均成交量 >= 2
+或同一主题至少 3 只股票同步异动
+```
+
+#### 政策与产业
+
+直接接权威站点列表页，不通过财经媒体二次转述：
+
+- [国务院政策文件库](https://sousuo.www.gov.cn/zcwjk/)
+- [国家发改委文件库](https://www.ndrc.gov.cn/xxgk/wjk/index.html?tab=ghwb)
+- [工信部政务公开](https://wap.miit.gov.cn/zwgk/index.html)
+- [中国证监会](https://www.csrc.gov.cn/)
+
+每个站点实现独立的 HTML / JSON adapter，每 30-60 分钟拉取一次，保留标题、发布时间、发布机构、
+分类、详情 URL 和正文摘要。后续再增加交易所、产业协会和商品价格来源。
+
+#### 第一批 provider registry
+
+```python
+EVENT_SOURCES = (
+    AkShareThsNewsSource(),
+    CninfoLatestAnnouncementSource(),
+    # V2 后续：SinaMarketAnomalySource(),
+    # V2 后续：MiitPolicySource(), NdrcPolicySource(),
+)
+```
+
+调度器逐个执行 provider，保留每个来源的 `success` / `error` 状态。单个来源失败仍继续聚合其他有效
+`NewsItem`；全部来源失败时返回失败状态，不生成空的 `daily-radar.md`。
+
 更具体地说，下一步最值得做的是：
 
 ```text
