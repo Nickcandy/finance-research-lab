@@ -4,14 +4,16 @@
 
 ## 项目定位
 
-`finance-research-lab` 的主线是 **URL-first 的 A 股投资研究 Agent**。
+`finance-research-lab` 的主线是 **Event-driven 的 A 股投资研究 Agent**。
 
-它从新闻 URL 或后续市场数据出发，生成可复盘的投资研究假设：
+它主动发现新闻、公告和行情异动，把多个来源聚合成市场事件，再生成可复盘的投资研究假设：
 
 ```text
-新闻 URL / 市场事件
-→ 事件理解
-→ 产业链影响
+新闻源 / 公司公告 / 行情异动
+→ NewsItem 标准化
+→ MarketEvent 去重与聚合
+→ 热点事件排序
+→ 产业链层级与供给卡点
 → A股候选发现
 → tools 校验
 → 利多 / 利空 / 情绪映射 / 伪相关
@@ -29,15 +31,17 @@
 V0 URL 新闻追源
 → V1 A股候选发现与验证
 → V1.5 证据工具和多轮研究流程
-→ V2 多 URL 投资雷达
-→ V3 行情 / 成交量 / 财务工具
+→ V2 自动事件发现与每日雷达
+→ V3 Serenity 产业链卡点研究
 → V4 复盘与信号回测
 → V5 AI Agent 简历展示版
 ```
 
-## V0：URL 新闻追源（当前已有）
+## V0：URL 新闻追源（当前已有的辅助入口）
 
 目标：输入一条静态 HTML 新闻 URL，输出一份 Markdown 研究报告。
+
+这条路径用于手动深挖单个来源和调试下游研究流程，不再是目标产品的主入口。URL 后续作为 `NewsItem.source_url` 保留。
 
 当前能力：
 
@@ -116,21 +120,17 @@ V1.5 的验证重点不是“新闻是真是假”。后续新闻源会接入可
 推荐顺序：
 
 ```text
-第一阶段：mock provider
-  - 优点：不需要 token，先保证 workflow 和报告结构稳定。
-  - 用途：公告、财报、行情和成交量的结构占位。
+第一阶段：BaoStock + AkShare provider chain（当前实现）
+  - BaoStock：A 股盘后日线行情主源，不复权，不需要 token。
+  - AkShare：巨潮公告元数据、财务指标，以及 BaoStock 失败时的行情 fallback。
+  - 风险：两者底层数据源都可能变化；fallback 失败时保留原始错误，不伪造数据。
 
-第二阶段：AkShare adapter
-  - 优点：本地 Python 包，通常不需要 token，适合快速原型。
-  - 用途：行情、成交量、部分财务数据。
-  - 风险：底层数据源可能变化，稳定性不如正式数据服务。
-
-第三阶段：Tushare provider
+第二阶段：Tushare provider
   - 优点：接口更标准，适合后续长期使用。
   - 用途：行情、财务指标、公告/日历等结构化数据。
   - 需要：Tushare token，部分高级接口可能需要权限或积分。
 
-第四阶段：交易所 / 巨潮公告 provider
+第三阶段：交易所 / 巨潮公告 provider
   - 优点：公告来源更接近官方披露。
   - 用途：公司公告、年报、季报、重大事项公告。
   - 风险：网页和接口稳定性、反爬、PDF 解析复杂度。
@@ -138,11 +138,11 @@ V1.5 的验证重点不是“新闻是真是假”。后续新闻源会接入可
 
 ### 需要用户准备的东西
 
-如果先用 AkShare：
+如果使用当前 BaoStock + AkShare 组合：
 
 ```text
 不需要 token
-需要确认 Python 环境能安装 akshare
+需要确认 Python 环境能安装 baostock 和 akshare
 需要接受数据源稳定性一般，先用于原型验证
 ```
 
@@ -285,11 +285,44 @@ downstream_relevance_score
 revenue_elasticity_score
 ```
 
-如果“白猫大神”的 scale 指的是另一套具体评分标准，后续把原文或规则补进来再替换。
+这组 0-3 分是当前实现的相关性占位，不代表
+[`muxuuu/serenity-skill`](https://github.com/muxuuu/serenity-skill) 的完整方法。Serenity 式研究应先排产业链层级和供给卡点，再排公司，并明确证据强度、反方理由和判断降级条件。该模型在 V3 直接迁移，不继续扩展这组三字段。
 
-## V2：多 URL 投资雷达
+## V2：自动事件发现与每日雷达（下一阶段）
 
-目标：输入多条新闻 URL，输出每日投资研究雷达。
+目标：无需用户手动输入 URL，系统主动发现最近 24 小时的热点和市场事件，输出每日投资研究雷达。
+
+### 核心概念
+
+```text
+NewsItem：一篇新闻、一条公司公告或一次行情异动，保留 source_url
+MarketEvent：多个来源去重、聚合后描述的同一件事
+Theme：多个事件形成的持续研究方向
+```
+
+### 最小流程
+
+```text
+可信新闻源 / 公司公告 / 行情异动
+→ 拉取最近 24 小时内容
+→ 标准化 NewsItem
+→ 去重并聚合 MarketEvent
+→ 热点事件排序
+→ 选择 Top 5 事件
+→ 拆产业链和供给卡点
+→ 发现并校验 A股候选
+→ 输出 daily-radar.md
+```
+
+热点排序第一版使用确定性指标：
+
+```text
+来源数量
+来源可信度
+发布时间新鲜度
+是否存在公司公告
+是否出现行情 / 成交量反应
+```
 
 报告结构：
 
@@ -307,14 +340,42 @@ revenue_elasticity_score
 
 工程重点：
 
-- 每条 URL 独立记录成功或失败。
-- 单条失败不影响其他 URL。
+- 每个来源独立记录成功或失败。
+- 单个来源失败不影响同一事件的其他有效来源。
+- 同一事件的多个来源只生成一个 `MarketEvent`，同时保留全部 `source_url`。
 - 全部失败时不生成误导性报告。
-- 多条新闻提到同一股票时合并证据和风险。
+- 多个事件提到同一股票时合并证据和风险。
 
-## V3：行情 / 成交量 / 财务工具
+## V3：Serenity 产业链卡点研究
 
-目标：让候选验证不只依赖新闻和公司描述，还能接入市场状态。
+目标：把热点事件转换为系统变化，先排产业链层级和真实供给卡点，再发现公司并核验证据，而不是直接从热门股票开始。
+
+核心流程：
+
+```text
+热点事件
+→ 系统发生什么变化
+→ 哪个物理 / 工艺 / 产能约束变紧
+→ 产业链分层
+→ 稀缺层级排序
+→ A股候选池
+→ 公告 / 财报 / 客户 / 产能 / 行情证据
+→ 优先研究名单与降级条件
+```
+
+报告至少说明：
+
+```text
+卡住的环节
+产业链位置
+排序原因
+证据强度：Strong / Medium / Weak / Unverified
+主要风险
+什么情况说明判断错了
+下一步验证项
+```
+
+现有行情、成交量和财务工具继续作为 V3 的证据输入：
 
 第一批工具：
 
@@ -331,7 +392,7 @@ fetch_financial_reports(symbol, periods)
 配置项建议：
 
 ```env
-STOCK_DATA_PROVIDER=akshare
+STOCK_DATA_PROVIDER=baostock,akshare
 STOCK_DATA_API_KEY=
 STOCK_DATA_BASE_URL=
 STOCK_DATA_TIMEOUT_SECONDS=30
@@ -422,33 +483,41 @@ false_positive_rate
 推荐面试表达：
 
 ```text
-我做了一个 URL-first 的 A 股投资研究 Agent。系统不是让 LLM 直接荐股，而是让 LLM 提出事件假设和候选公司，再通过 tools 校验股票代码、主营、行业、公告、财报和市场数据。workflow 由代码控制，每一步记录 agent_steps，输出用 ResearchReport schema 约束，并保留 fallback、证据计划、验证任务和复盘路径。这个项目展示了 Agent 工程里模型、工具、状态、结构化输出和可验证性的分工。
+我做了一个 Event-driven 的 A 股投资研究 Agent。系统主动发现新闻、公告和行情异动，把多个来源聚合成市场事件，再拆产业链和供给卡点、发现候选公司，并通过 tools 校验股票代码、主营、公告、财报和行情数据。workflow 由代码控制，每一步记录 agent_steps，输出用 schema 约束，并保留来源、fallback、验证任务和复盘路径。
 ```
 
 ## 下一阶段最小开发任务
 
-V1.5 最小版已经落地到 mock provider。下一步是把 mock provider 替换成真实数据源 adapter。
+V1.5 已接入 BaoStock 行情主源和 AkShare 公告 / 财报及行情 fallback，并采用最多三轮的受控 Tool Calling：模型只能在公告、
+财报和行情工具中选择，代码校验参数、执行查询并回传结果后，再生成最终结构化报告。公告、财报
+和行情查询缓存到本地。BaoStock 行情缓存位于 `data/baostock_cache/`，AkShare 缓存位于
+`data/akshare_cache/`；行情缓存 TTL 为 24 小时，传入 `--refresh-evidence` 可同时强制刷新。
+workflow 会补齐模型未调用的最低证据项；只有同时具备非空公司证据和有效行情证据的候选才标记为
+`verified`，空结果或部分失败会保留为 `unverified` 并写入待补充说明。
+
+下一阶段不再扩展手工多 URL 输入，而是实现 V2 自动事件发现。
 
 验收标准：
 
 ```text
-输入 1 条可信新闻 + 股票池 + A 股 universe
-先判断事件类型
-生成证据计划
-至少调用公司公告 / 财报工具
-至少调用行情 / 成交量工具
-输出 reports/agent-report.md
-报告包含事件类型、证据计划、支持证据、反对证据、上下游 scale、市场反应、待验证点
+无需用户手动输入 URL
+拉取最近 24 小时的可信内容
+标准化为 NewsItem
+同一事件的多个来源聚合为一个 MarketEvent
+排出 Top 5 热点事件
+每个事件保留全部 source_url
+输出 reports/daily-radar.md
+单个来源失败不影响其他来源和事件
 pytest 通过
 ```
 
 后续任务拆分：
 
 ```text
-Task 1：接入 AkShare 行情 / 成交量 adapter
-Task 2：接入 Tushare provider 配置和 token 读取
-Task 3：接入公司公告列表 provider
-Task 4：把 mock 反对证据替换成真实数据生成
-Task 5：把 Evidence-first 报告接入多 URL radar
-Task 6：补真实 provider 的隔离测试
+Task 1：定义 NewsItem / MarketEvent / Theme
+Task 2：接入一个可信事件源并实现 24 小时拉取
+Task 3：实现事件去重、聚类和热点排序
+Task 4：输出 Event-driven daily-radar.md
+Task 5：加入 Serenity 产业链层级与供给卡点分析
+Task 6：补公告正文 / PDF 和更稳定的数据 provider
 ```

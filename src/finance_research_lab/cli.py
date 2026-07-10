@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from time import sleep
+
+from .akshare_evidence import AkShareEvidenceProvider
 from .a_share_universe import sync_a_share_universe_from_akshare
+from .baostock_market import BaoStockMarketProvider
+from .market_evidence import FallbackMarketProvider
 from .workflow import run_news_trace_workflow, run_radar_workflow, run_research_agent_workflow
 
 
@@ -42,6 +47,9 @@ def research_agent_cmd(args: argparse.Namespace) -> int:
         watchlist_path=args.watchlist,
         output_path=args.output,
         a_share_universe_path=args.a_share_universe,
+        evidence_cache_path=args.evidence_cache,
+        market_cache_path=args.market_cache,
+        refresh_evidence=args.refresh_evidence,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
@@ -60,6 +68,29 @@ def sync_a_share_universe_cmd(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"wrote {args.output} ({len(companies)} companies)")
+    return 0
+
+
+def sync_a_share_evidence_cmd(args: argparse.Namespace) -> int:
+    company_provider = AkShareEvidenceProvider(args.cache, refresh=True)
+    market_provider = FallbackMarketProvider(
+        BaoStockMarketProvider(args.market_cache, refresh=True),
+        company_provider,
+    )
+    try:
+        for index, symbol in enumerate(args.symbols):
+            announcements = company_provider.announcements(symbol)
+            financials = company_provider.financials(symbol)
+            market = market_provider.market(symbol, args.lookback_days)
+            print(
+                f"synced {symbol}: {len(announcements)} announcements, "
+                f"{len(financials)} financial periods, market {market.trade_date}"
+            )
+            if index < len(args.symbols) - 1:
+                sleep(1)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -98,6 +129,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="CSV A-share universe path",
     )
     agent.add_argument("--output", default="reports/agent-report.md", help="Output Markdown path")
+    agent.add_argument("--evidence-cache", default="data/akshare_cache", help="AkShare evidence cache path")
+    agent.add_argument("--market-cache", default="data/baostock_cache", help="BaoStock market cache path")
+    agent.add_argument("--refresh-evidence", action="store_true", help="Refresh all evidence caches")
     agent.set_defaults(func=research_agent_cmd)
 
     sync_universe = subparsers.add_parser(
@@ -111,6 +145,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output CSV A-share universe path",
     )
     sync_universe.set_defaults(func=sync_a_share_universe_cmd)
+
+    sync_evidence = subparsers.add_parser(
+        "sync-a-share-evidence", help="Fetch and cache A-share evidence"
+    )
+    sync_evidence.add_argument("--symbols", nargs="+", required=True, help="A-share symbols, e.g. 300308.SZ")
+    sync_evidence.add_argument("--cache", default="data/akshare_cache", help="Evidence cache path")
+    sync_evidence.add_argument(
+        "--market-cache", default="data/baostock_cache", help="BaoStock market cache path"
+    )
+    sync_evidence.add_argument("--lookback-days", type=int, default=5, help="Trading days for market evidence")
+    sync_evidence.set_defaults(func=sync_a_share_evidence_cmd)
     return parser
 
 

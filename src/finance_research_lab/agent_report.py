@@ -81,13 +81,15 @@ def _format_evidence_first(result: ResearchAgentResult) -> str:
             result.market_snapshots,
         ),
         "### 反对证据",
-        "- 当前为 V1.5 mock provider，反对证据待接入真实公告、财报和行情后补充。",
+        _format_counter_evidence(result.financial_snapshots, result.market_snapshots),
         "### 上下游 scale",
         _format_value_chain_scores(result.value_chain_scores),
         "### 市场反应",
         _format_market_snapshots(result.market_snapshots),
         "### 下一步验证",
         _format_next_questions(result.evidence_plan),
+        "### 待补充",
+        _format_evidence_warnings(result.evidence_warnings),
     ]
     return "\n".join(sections)
 
@@ -120,17 +122,22 @@ def _format_supporting_evidence(
 ) -> str:
     lines: list[str] = []
     for announcement in announcements:
-        lines.append(f"- 公告：{announcement.title}；摘要：{announcement.summary or '待补充'}")
+        lines.append(
+            f"- 公告：{announcement.title}；日期：{announcement.published_at or '未提供'}；"
+            f"来源：{announcement.provider or '未提供'}"
+        )
     for financial in financials:
         lines.append(
             f"- 财报：{financial.symbol} {financial.report_period}；"
             f"收入：{_format_optional_number(financial.revenue)}；"
-            f"净利润：{_format_optional_number(financial.net_profit)}"
+            f"净利润：{_format_optional_number(financial.net_profit)}；"
+            f"经营现金流：{_format_optional_number(financial.operating_cash_flow)}"
         )
     for snapshot in snapshots:
         lines.append(
             f"- 行情：{snapshot.symbol} 最近 {snapshot.lookback_days} 日；"
-            f"涨跌幅：{snapshot.pct_chg}%；成交额：{snapshot.amount:g}"
+            f"区间涨跌幅：{_format_optional_number(snapshot.period_return_pct)}%；"
+            f"成交额：{snapshot.amount:g}"
         )
     if not lines:
         return "- 待补充"
@@ -154,10 +161,37 @@ def _format_market_snapshots(snapshots: tuple[MarketSnapshot, ...]) -> str:
     if not snapshots:
         return "- 待补充"
     return "\n".join(
-        f"- {snapshot.symbol}：收盘 {snapshot.close:g}，涨跌幅 {snapshot.pct_chg:g}%，"
-        f"成交量 {snapshot.volume:g}，成交额 {snapshot.amount:g}"
+        f"- {snapshot.symbol}：{snapshot.trade_date} 收盘 {snapshot.close:g}，"
+        f"当日涨跌幅 {snapshot.pct_chg:g}%，区间涨跌幅 "
+        f"{_format_optional_number(snapshot.period_return_pct)}%，量比 "
+        f"{_format_optional_number(snapshot.volume_ratio)}，成交额 {snapshot.amount:g}；"
+        f"来源：{snapshot.provider or '未提供'}"
         for snapshot in snapshots
     )
+
+
+def _format_counter_evidence(
+    financials: tuple[FinancialSnapshot, ...], snapshots: tuple[MarketSnapshot, ...]
+) -> str:
+    lines: list[str] = []
+    for financial in financials:
+        if financial.revenue_yoy is not None and financial.revenue_yoy < 0:
+            lines.append(f"- 财报：{financial.symbol} 营收同比为 {financial.revenue_yoy:g}%。")
+        if financial.net_profit_yoy is not None and financial.net_profit_yoy < 0:
+            lines.append(f"- 财报：{financial.symbol} 净利润同比为 {financial.net_profit_yoy:g}%。")
+    for snapshot in snapshots:
+        if snapshot.period_return_pct is not None and snapshot.period_return_pct < 0:
+            lines.append(
+                f"- 行情：{snapshot.symbol} 最近 {snapshot.lookback_days} 日下跌 "
+                f"{snapshot.period_return_pct:g}%。"
+            )
+    return "\n".join(lines) if lines else "- 暂无明确反对证据；仍需结合公告正文和后续财报复核。"
+
+
+def _format_evidence_warnings(warnings: tuple[str, ...]) -> str:
+    if not warnings:
+        return "- 暂无"
+    return "\n".join(f"- {warning}" for warning in warnings)
 
 
 def _format_next_questions(plan: EvidencePlan | None) -> str:

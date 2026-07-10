@@ -16,6 +16,8 @@ venv/
 !/data/watchlist.example.csv
 !/data/a_share_universe.example.csv
 !/data/a_share_universe.csv
+/data/akshare_cache/
+/data/baostock_cache/
 /reports/*.md
 !/reports/.gitkeep
 

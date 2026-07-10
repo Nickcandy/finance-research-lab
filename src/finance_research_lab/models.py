@@ -168,6 +168,9 @@ class CompanyAnnouncement:
     published_at: str
     url: str = ""
     summary: str = ""
+    provider: str = ""
+    source_url: str = ""
+    fetched_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -180,6 +183,9 @@ class FinancialSnapshot:
     net_profit_yoy: float | None = None
     gross_margin: float | None = None
     operating_cash_flow: float | None = None
+    provider: str = ""
+    source_url: str = ""
+    fetched_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +200,11 @@ class MarketSnapshot:
     volume: float
     amount: float
     lookback_days: int
+    period_return_pct: float | None = None
+    volume_ratio: float | None = None
+    provider: str = ""
+    source_url: str = ""
+    fetched_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -227,3 +238,4 @@ class ResearchAgentResult:
     financial_snapshots: tuple[FinancialSnapshot, ...] = field(default_factory=tuple)
     market_snapshots: tuple[MarketSnapshot, ...] = field(default_factory=tuple)
     value_chain_scores: tuple[ValueChainScore, ...] = field(default_factory=tuple)
+    evidence_warnings: tuple[str, ...] = field(default_factory=tuple)

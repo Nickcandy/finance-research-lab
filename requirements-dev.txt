@@ -1,1 +1,1 @@
--e .[akshare,dev]
+-e .[akshare,baostock,dev]

@@ -58,7 +58,7 @@ class ChatCompletionsClient:
     def structured_completion(
         self,
         *,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         schema_name: str,
         schema: dict[str, Any],
         temperature: float = 0.2,
@@ -107,9 +107,53 @@ class ChatCompletionsClient:
             raw=payload,
         )
 
+    def tool_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        temperature: float = 0.2,
+        timeout: int | None = None,
+    ) -> LLMResponse:
+        """Request one OpenAI-compatible tool-calling turn."""
+
+        if not self.api_key:
+            raise ValueError("LLM_API_KEY is not set")
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": temperature,
+        }
+        request = Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self.urlopen(request, timeout or self.timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"LLM tool request failed: {exc}") from exc
+        message = payload.get("choices", [{}])[0].get("message", {})
+        if message.get("refusal"):
+            raise RuntimeError(f"LLM refused tool response: {message['refusal']}")
+        if not isinstance(message, dict):
+            raise RuntimeError("LLM tool response did not include a message")
+        usage = payload.get("usage", {})
+        return LLMResponse(
+            content=message.get("content") if isinstance(message.get("content"), str) else "",
+            model=str(payload.get("model", self.model)),
+            input_tokens=int(usage.get("prompt_tokens", 0)),
+            output_tokens=int(usage.get("completion_tokens", 0)),
+            raw=message,
+        )
+
     def _messages(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         schema: dict[str, Any],
     ) -> list[dict[str, str]]:
         if self.response_format != "json_object":

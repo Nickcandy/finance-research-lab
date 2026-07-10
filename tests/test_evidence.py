@@ -6,7 +6,7 @@ from finance_research_lab.evidence import (
     fetch_market_snapshot,
     score_value_chain_relevance,
 )
-from finance_research_lab.models import RawNews, WatchlistItem
+from finance_research_lab.models import CompanyAnnouncement, FinancialSnapshot, MarketSnapshot, RawNews, WatchlistItem
 
 
 def test_classify_event_detects_capex_and_candidates() -> None:
@@ -34,17 +34,18 @@ def test_build_evidence_plan_selects_company_and_market_tools() -> None:
     assert plan.candidate_symbols == ("300308.SZ",)
 
 
-def test_mock_company_and_market_tools_return_structured_data() -> None:
-    announcements = fetch_company_announcements("300308.SZ", "", "")
-    financials = fetch_financial_reports("300308.SZ", ("latest",))
-    market = fetch_market_snapshot("300308.SZ", 5)
+def test_evidence_tools_return_provider_data_without_mock_values() -> None:
+    provider = _provider()
+    announcements = fetch_company_announcements("300308.SZ", "", "", provider)
+    financials = fetch_financial_reports("300308.SZ", ("latest",), provider)
+    market = fetch_market_snapshot("300308.SZ", 5, provider)
 
     assert announcements[0].symbol == "300308.SZ"
-    assert financials[0].report_period == "latest"
+    assert announcements[0].url == "https://www.cninfo.com.cn/a"
+    assert financials[0].report_period == "2026-03-31"
     assert market.symbol == "300308.SZ"
-    assert market.close > 0
-    assert market.volume > 0
-    assert market.amount > 0
+    assert market.period_return_pct == 4.0
+    assert market.provider == "akshare/eastmoney"
 
 
 def test_score_value_chain_relevance_uses_zero_to_three_scale() -> None:
@@ -75,3 +76,52 @@ def _watchlist_item() -> WatchlistItem:
         "估值拥挤",
         "通信设备",
     )
+
+
+class _Provider:
+    def announcements(self, symbol: str, start_date: str, end_date: str):
+        return (
+            CompanyAnnouncement(
+                symbol=symbol,
+                title="真实公告标题",
+                announcement_type="日常经营",
+                published_at="2026-06-01",
+                url="https://www.cninfo.com.cn/a",
+                provider="akshare/cninfo",
+            ),
+        )
+
+    def financials(self, symbol: str):
+        return (
+            FinancialSnapshot(
+                symbol=symbol,
+                report_period="2026-03-31",
+                revenue=120.0,
+                revenue_yoy=10.0,
+                net_profit=20.0,
+                net_profit_yoy=8.0,
+                gross_margin=30.0,
+                provider="akshare/eastmoney",
+            ),
+        )
+
+    def market(self, symbol: str, lookback_days: int):
+        return MarketSnapshot(
+            symbol=symbol,
+            trade_date="2026-06-10",
+            open=100.0,
+            high=105.0,
+            low=99.0,
+            close=104.0,
+            pct_chg=2.0,
+            volume=200.0,
+            amount=1000.0,
+            lookback_days=lookback_days,
+            period_return_pct=4.0,
+            volume_ratio=2.0,
+            provider="akshare/eastmoney",
+        )
+
+
+def _provider() -> _Provider:
+    return _Provider()

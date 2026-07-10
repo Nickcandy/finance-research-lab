@@ -1,17 +1,18 @@
 # A股投资研究 Agent 产品文档
 
-> 更新时间：2026-06-30
+> 更新时间：2026-07-10
 
 ## 1. 一句话定位
 
-`finance-research-lab` 是一个面向个人投资理财研究的本地 AI Agent 工具：从新闻 URL 或后续市场数据出发，识别事件、拆解产业链、发现可能受影响的 A 股标的，并用 tools 校验公司和证据，最终输出可复盘的 Markdown 研究报告。
+`finance-research-lab` 是一个面向个人投资理财研究的 Event-driven A 股 AI Agent：主动发现近期热点和市场事件，聚合同一事件的多个来源，再拆解产业链、寻找供给卡点、发现可能受影响的 A 股标的，并用 tools 校验公司和证据，最终输出可复盘的 Markdown 研究报告。
 
 它不是自动交易系统，也不是黑盒荐股工具。它的目标是辅助个人研究：
 
 ```text
-新闻 URL / 市场事件
-→ 事件理解
-→ 产业链影响拆解
+新闻源 / 公司公告 / 行情异动
+→ 热点与事件发现
+→ 多来源去重和事件聚合
+→ 产业链层级与供给卡点拆解
 → A股候选发现
 → tool 校验股票与主营相关性
 → 利多 / 利空 / 情绪映射 / 伪相关分类
@@ -22,23 +23,46 @@
 
 当前产品同时服务两个目标：
 
-1. **个人投资研究**：帮助用户从新闻和市场事件中快速判断哪些 A 股公司可能受益、受损、只是情绪映射，或者属于伪相关。
+1. **个人投资研究**：主动发现值得研究的热点和市场事件，帮助用户判断哪些 A 股公司可能受益、受损、只是情绪映射，或者属于伪相关。
 2. **AI Agent 简历项目**：展示一个真实可解释的 Agent 系统，而不是只写 prompt。项目要能讲清楚 workflow、tools、structured output、fallback、agent steps、后续 RAG/行情/回测扩展。
 
 ## 3. 核心原则
 
-- **URL-first**：当前输入优先使用新闻 URL。暂不做大规模爬虫，不依赖动态页面抓取。
+- **Event-driven**：系统主动发现热点和事件。URL 是事件的证据来源，不是产品主输入。
+- **多来源聚合**：同一事件可能对应多篇新闻或公告，研究流程对 `MarketEvent` 分析一次，并保留全部来源。
+- **URL 保留为辅助入口**：支持用户手动提交 URL 深挖单个事件，也用于调试抓取和证据流程。
 - **A股优先**：第一阶段只覆盖 A 股候选发现与验证，后续再扩展港股、美股。
 - **watchlist 不是边界**：自选股只提供个人上下文、排序优先级和 thesis/risks，不限制系统输出范围。
 - **LLM 提假设，tools 做校验**：LLM 可以提出候选公司和影响路径，但正式报告必须区分已校验候选和待确认候选。
 - **研究辅助，不直接交易**：输出是研究状态、证据、风险和验证任务，不给确定性买卖结论。
 - **可复盘**：每条判断都要保留来源、理由、证据、风险和后续验证点。
 
-## 4. 第一阶段输入
+## 4. 产品输入
 
-### 4.1 新闻 URL
+### 4.1 自动事件发现（目标主入口）
 
-当前优先输入是一条或多条可直接访问的静态 HTML 新闻 URL：
+主入口按市场和时间窗口主动发现事件：
+
+```bash
+finance-lab discover \
+  --market a-share \
+  --window 24h \
+  --output reports/daily-radar.md
+```
+
+第一版事件来源覆盖：
+
+```text
+可信新闻源
+公司公告
+行情 / 成交量异动
+```
+
+系统把原始内容标准化为 `NewsItem`，再去重、聚类为 `MarketEvent`。多个事件可进一步归入持续性的 `Theme`。
+
+### 4.2 新闻 URL（当前已实现的辅助入口）
+
+当前代码支持输入一条或多条可直接访问的静态 HTML 新闻 URL，用于手动深挖和验证下游研究流程：
 
 ```bash
 finance-lab trace-news \
@@ -60,7 +84,7 @@ finance-lab radar \
 - 暂不支持登录、付费墙、反爬限制和 JavaScript 动态渲染。
 - 抓取失败时应记录失败 step，不把不完整内容伪装成分析结果。
 
-### 4.2 watchlist CSV
+### 4.3 watchlist CSV
 
 `data/watchlist.example.csv` 继续保留，但语义调整为“个人上下文”，不是候选股票全集。
 
@@ -77,9 +101,9 @@ symbol,name,market,themes,thesis,risks
 - 影响排序和复盘优先级。
 - 后续记录用户是否真的持续跟踪该标的。
 
-### 4.3 A股候选查询工具
+### 4.4 A股候选查询工具
 
-第一阶段产品设计需要补一个 A 股查询 tool。它可以先是本地 CSV，也可以后续接外部数据源。
+当前已经使用本地 A 股 universe 完成候选代码校验，后续可接外部数据源扩充公司、行业和主营信息。
 
 目标输出：
 
@@ -121,8 +145,12 @@ source
 当前项目不追求自由循环的黑盒 Agent，而是采用代码控制的 Agent workflow：
 
 ```text
-fetch_news_tool
+discover_news_items
+→ normalize_news_items
+→ cluster_market_events
+→ rank_hot_events
 → analyze_event_with_llm
+→ map_value_chain_and_scarce_layers
 → discover_a_share_candidates
 → verify_candidates_with_tools
 → classify_impact
@@ -134,7 +162,7 @@ fetch_news_tool
 
 - **workflow**：控制流程顺序、错误处理和 agent step 记录。
 - **LLM**：理解新闻、提出产业链影响、生成候选假设、解释利多利空。
-- **tools**：抓取 URL、读取 watchlist、查询 A 股公司、校验主营/行业/概念、写报告。
+- **tools**：拉取事件源、抓取 URL、读取 watchlist、查询 A 股公司、校验主营/行业/概念、写报告。
 - **schema**：固定输出结构，避免自由文本直接进入核心链路。
 - **fallback**：LLM 不可用时，使用本地规则生成保底报告，但要标注可信度限制。
 
@@ -175,32 +203,39 @@ fetch_news_tool
 - `ResearchReport` structured output 契约。
 - Chat Completions 兼容 LLM 接入和本地 fallback。
 - `AgentStep` 过程记录。
+- AkShare 公告、财报和行情证据 adapter。
+- 最多三轮的受控 Evidence Tool Calling。
 
 尚未实现：
 
-- A 股候选发现 tool。
-- A 股公司校验数据源。
-- 候选分为“已校验 / 待确认 / 排除项”的正式报告结构。
-- 行情、成交量、财务、估值数据。
+- 主动事件源拉取。
+- `NewsItem` 标准化与同事件聚类。
+- 热点事件排序和每日 Event-driven radar。
+- Serenity 式产业链层级与供给卡点排序。
+- 公告正文 / PDF、估值和更稳定的数据 provider。
 - 持久化 agent_runs / agent_steps / reviews。
 - 回测和复盘闭环。
 
 ## 9. 下一步最小任务
 
-下一步不再围绕“手动新闻 + 自选股全集”推进，而是做：
+下一步不再扩展多 URL 手工输入，而是做自动事件发现最小闭环：
 
 ```text
-URL 新闻
-→ A股候选发现
-→ tool 校验
-→ 标记 watchlist 命中
-→ 输出已校验候选 / 待确认候选 / 排除项
+拉取最近 24 小时的可信内容
+→ 标准化 NewsItem
+→ 去重并聚合 MarketEvent
+→ 排出 Top 5 热点事件
+→ 拆产业链和供给卡点
+→ 发现并校验 A股候选
+→ 输出 daily-radar.md
 ```
 
 验收标准：
 
-- 输入一条可访问新闻 URL。
-- 系统能提出 A 股候选，并记录候选来源。
+- 无需用户手动输入 URL。
+- 同一事件的多条来源只生成一个 `MarketEvent`，同时保留全部 `source_url`。
+- 热点排序至少考虑来源数量、来源可信度、发布时间和行情 / 成交量反应。
+- 系统能提出 A 股候选，并记录事件、产业链层级和候选来源。
 - 候选必须经过 tool 校验；校验不足不能进入“已校验候选”。
 - watchlist 命中只影响高亮和上下文，不限制输出。
 - 报告仍然明确“不构成投资建议”。

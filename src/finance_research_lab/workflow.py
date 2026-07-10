@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 from typing import Any
 
+from .akshare_evidence import AkShareEvidenceProvider
+from .baostock_market import BaoStockMarketProvider
+from .evidence_tool_agent import run_evidence_tool_calls
+from .llm.chat_completions_client import ChatCompletionsClient
+from .market_evidence import FallbackMarketProvider, MarketEvidenceProvider
 from .agent_report import render_research_agent_report
 from .agent_models import AgentRun, AgentStep, ToolResult
 from .agents.tools import ToolRegistry, ToolSpec
@@ -26,8 +32,10 @@ from .models import (
     ResearchTask,
     WatchlistItem,
 )
+from .news_trace import verify_research_report_candidates
 from .radar_report import render_opportunity_radar
 from .research_planner import plan_research_tasks
+from .research_agent import analyze_research_report_with_agent
 from .tools import (
     fetch_news_tool,
     read_a_share_universe_tool,
@@ -178,10 +186,18 @@ def run_research_agent_workflow(
     watchlist_path: str | Path,
     output_path: str | Path,
     a_share_universe_path: str | Path = DEFAULT_A_SHARE_UNIVERSE_PATH,
+    evidence_cache_path: str | Path = "data/akshare_cache",
+    market_cache_path: str | Path = "data/baostock_cache",
+    refresh_evidence: bool = False,
 ) -> AgentRun:
     """Run the minimal code-controlled AI research Agent workflow."""
 
-    registry = _research_tool_registry()
+    company_provider = AkShareEvidenceProvider(evidence_cache_path, refresh=refresh_evidence)
+    market_provider = FallbackMarketProvider(
+        BaoStockMarketProvider(market_cache_path, refresh=refresh_evidence),
+        company_provider,
+    )
+    registry = _research_tool_registry(company_provider, market_provider)
     steps: list[AgentStep] = []
 
     fetch_result = registry.execute("fetch_news", {"url": url})
@@ -203,10 +219,6 @@ def run_research_agent_workflow(
     classify_result = ToolResult("classify_event", "success", classification)
     steps.append(_step("classify_event", classify_result))
 
-    evidence_plan = build_evidence_plan(classification)
-    evidence_plan_result = ToolResult("build_evidence_plan", "success", evidence_plan)
-    steps.append(_step("build_evidence_plan", evidence_plan_result))
-
     tasks = plan_research_tasks(fetch_result.output, watchlist_result.output)
     plan_result = ToolResult("plan_research_tasks", "success", tasks)
     steps.append(_step("plan_research_tasks", plan_result))
@@ -223,20 +235,66 @@ def run_research_agent_workflow(
     if trace_result.status == "error":
         return AgentRun("research_agent", steps, str(output_path))
 
-    company_announcements, financial_snapshots = _collect_company_evidence(evidence_plan)
-    company_evidence_result = ToolResult(
-        "fetch_company_evidence",
-        "success",
-        {
-            "announcements": company_announcements,
-            "financials": financial_snapshots,
-        },
+    candidate_symbols = tuple(
+        dict.fromkeys(impact.symbol for impact in trace_result.output.stock_impacts if impact.market == "A股")
     )
-    steps.append(_step("fetch_company_evidence", company_evidence_result))
+    tool_results: tuple[ToolResult, ...] = ()
+    try:
+        if trace_result.error:
+            raise RuntimeError(trace_result.error)
+        outcome = run_evidence_tool_calls(
+            ChatCompletionsClient(), registry, fetch_result.output, trace_result.output
+        )
+        tool_result = ToolResult("plan_evidence_tool_calls", "success", outcome.results)
+        steps.append(_step("plan_evidence_tool_calls", tool_result))
+        tool_results, completion_warnings = _complete_candidate_evidence(
+            registry,
+            candidate_symbols,
+            outcome.results,
+            outcome.attempted_tools,
+            steps,
+        )
+        company_announcements, financial_snapshots, market_snapshots = _evidence_outputs(tool_results)
+        evidence_warnings = [*outcome.warnings, *completion_warnings]
+        evidence_plan = EvidencePlan(
+            event_type=classification.event_type,
+            candidate_symbols=candidate_symbols,
+            required_tools=tuple(dict.fromkeys(result.tool_name for result in tool_results)),
+            questions=tuple(task.question for task in tasks),
+        )
+    except Exception as exc:
+        evidence_warnings = [f"tool calling fallback：{exc}"]
+        evidence_plan = build_evidence_plan(classification, candidate_symbols)
+        evidence_plan_result = ToolResult("build_evidence_plan", "success", evidence_plan, str(exc))
+        steps.append(_step("build_evidence_plan", evidence_plan_result))
+        company_announcements, financial_snapshots, fallback_warnings = _collect_company_evidence(
+            registry, evidence_plan, steps
+        )
+        market_snapshots, market_warnings = _collect_market_evidence(registry, evidence_plan, steps)
+        evidence_warnings.extend(fallback_warnings)
+        evidence_warnings.extend(market_warnings)
 
-    market_snapshots = _collect_market_evidence(evidence_plan)
-    market_evidence_result = ToolResult("fetch_market_evidence", "success", market_snapshots)
-    steps.append(_step("fetch_market_evidence", market_evidence_result))
+    final_report = trace_result.output
+    if tool_results:
+        try:
+            final_report = analyze_research_report_with_agent(
+                fetch_result.output,
+                watchlist_result.output,
+                evidence_context=[_tool_context(result) for result in tool_results],
+            )
+        except Exception as exc:
+            evidence_warnings.append(f"evidence synthesis fallback：{exc}")
+    final_report = verify_research_report_candidates(
+        final_report, watchlist_result.output, universe_result.output
+    )
+    final_report = _apply_tool_verification(
+        final_report,
+        company_announcements,
+        financial_snapshots,
+        market_snapshots,
+    )
+    trace_result = ToolResult("synthesize_evidence_report", "success", final_report)
+    steps.append(_step("synthesize_evidence_report", trace_result))
 
     value_chain_scores = tuple(
         score_value_chain_relevance(fetch_result.output, item)
@@ -269,6 +327,7 @@ def run_research_agent_workflow(
         financial_snapshots=financial_snapshots,
         market_snapshots=market_snapshots,
         value_chain_scores=value_chain_scores,
+        evidence_warnings=tuple(evidence_warnings),
     )
     markdown = render_research_agent_report(result, steps)
     render_result = ToolResult("render_research_agent_report", "success", markdown)
@@ -280,7 +339,120 @@ def run_research_agent_workflow(
     return AgentRun("research_agent", steps, str(output_path))
 
 
-def _research_tool_registry() -> ToolRegistry:
+def _evidence_outputs(
+    results: tuple[ToolResult, ...],
+) -> tuple[tuple[CompanyAnnouncement, ...], tuple[FinancialSnapshot, ...], tuple[MarketSnapshot, ...]]:
+    announcements: list[CompanyAnnouncement] = []
+    financials: list[FinancialSnapshot] = []
+    markets: list[MarketSnapshot] = []
+    for result in results:
+        if result.status != "success":
+            continue
+        if result.tool_name == "fetch_company_announcements":
+            announcements.extend(result.output)
+        elif result.tool_name == "fetch_financial_reports":
+            financials.extend(result.output)
+        elif result.tool_name == "fetch_market_snapshot":
+            markets.append(result.output)
+    return tuple(announcements), tuple(financials), tuple(markets)
+
+
+def _tool_context(result: ToolResult) -> dict[str, Any]:
+    return {"tool": result.tool_name, "status": result.status, "output": str(result.output), "error": result.error}
+
+
+def _apply_tool_verification(
+    report: ResearchReport,
+    announcements: tuple[CompanyAnnouncement, ...],
+    financials: tuple[FinancialSnapshot, ...],
+    markets: tuple[MarketSnapshot, ...],
+) -> ResearchReport:
+    company_symbols = {item.symbol for item in (*announcements, *financials)}
+    market_by_symbol = {item.symbol: item for item in markets}
+    impacts = []
+    for impact in report.stock_impacts:
+        if impact.verification_status == "excluded":
+            impacts.append(impact)
+        elif impact.symbol in company_symbols and impact.symbol in market_by_symbol:
+            market = market_by_symbol[impact.symbol]
+            market_source = f"{market.provider} market" if market.provider else "market"
+            impacts.append(
+                replace(
+                    impact,
+                    verification_status="verified",
+                    verification_source=f"AkShare company and {market_source} evidence",
+                )
+            )
+        else:
+            impacts.append(replace(impact, verification_status="unverified", verification_source=""))
+    return replace(report, stock_impacts=tuple(impacts))
+
+
+def _complete_candidate_evidence(
+    registry: ToolRegistry,
+    candidate_symbols: tuple[str, ...],
+    initial_results: tuple[ToolResult, ...],
+    attempted_tools: dict[str, frozenset[str]],
+    steps: list[AgentStep],
+) -> tuple[tuple[ToolResult, ...], list[str]]:
+    results = list(initial_results)
+    attempts = {symbol: set(names) for symbol, names in attempted_tools.items()}
+    warnings: list[str] = []
+
+    for symbol in candidate_symbols:
+        coverage = _candidate_evidence_coverage(tuple(results)).get(symbol, set())
+        if not coverage.intersection({"fetch_company_announcements", "fetch_financial_reports"}):
+            for tool_name, arguments in (
+                ("fetch_financial_reports", {"symbol": symbol}),
+                ("fetch_company_announcements", {"symbol": symbol}),
+            ):
+                if tool_name in attempts.get(symbol, set()):
+                    continue
+                result = registry.execute(tool_name, arguments)
+                results.append(result)
+                attempts.setdefault(symbol, set()).add(tool_name)
+                steps.append(_step(f"{tool_name}:{symbol}", result))
+                if result.status == "error":
+                    warnings.append(f"{symbol} {tool_name} 不可用：{result.error}")
+                if symbol in _candidate_evidence_coverage((result,)):
+                    break
+
+        coverage = _candidate_evidence_coverage(tuple(results)).get(symbol, set())
+        if "fetch_market_snapshot" not in coverage and "fetch_market_snapshot" not in attempts.get(symbol, set()):
+            result = registry.execute("fetch_market_snapshot", {"symbol": symbol, "lookback_days": 5})
+            results.append(result)
+            attempts.setdefault(symbol, set()).add("fetch_market_snapshot")
+            steps.append(_step(f"fetch_market_snapshot:{symbol}", result))
+            if result.status == "error":
+                warnings.append(f"{symbol} fetch_market_snapshot 不可用：{result.error}")
+
+        coverage = _candidate_evidence_coverage(tuple(results)).get(symbol, set())
+        if not coverage.intersection({"fetch_company_announcements", "fetch_financial_reports"}):
+            warnings.append(f"{symbol} 缺少非空公司公告或财报证据。")
+        if "fetch_market_snapshot" not in coverage:
+            warnings.append(f"{symbol} 缺少有效行情证据。")
+
+    return tuple(results), warnings
+
+
+def _candidate_evidence_coverage(results: tuple[ToolResult, ...]) -> dict[str, set[str]]:
+    coverage: dict[str, set[str]] = {}
+    for result in results:
+        if result.status != "success":
+            continue
+        output = result.output
+        items = output if isinstance(output, tuple) else (output,)
+        for item in items:
+            symbol = getattr(item, "symbol", "")
+            if symbol:
+                coverage.setdefault(symbol, set()).add(result.tool_name)
+    return coverage
+
+
+def _research_tool_registry(
+    company_provider: AkShareEvidenceProvider | None = None,
+    market_provider: MarketEvidenceProvider | None = None,
+) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -345,9 +517,11 @@ def _research_tool_registry() -> ToolRegistry:
                     "start_date": {"type": "string"},
                     "end_date": {"type": "string"},
                 },
-                "required": ["symbol", "start_date", "end_date"],
+                "required": ["symbol"],
             },
-            handler=fetch_company_announcements,
+            handler=lambda symbol, start_date="", end_date="": fetch_company_announcements(
+                symbol, start_date, end_date, company_provider
+            ),
         )
     )
     registry.register(
@@ -358,11 +532,10 @@ def _research_tool_registry() -> ToolRegistry:
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "periods": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["symbol", "periods"],
+                "required": ["symbol"],
             },
-            handler=fetch_financial_reports,
+            handler=lambda symbol: fetch_financial_reports(symbol, (), company_provider),
         )
     )
     registry.register(
@@ -375,31 +548,61 @@ def _research_tool_registry() -> ToolRegistry:
                     "symbol": {"type": "string"},
                     "lookback_days": {"type": "integer"},
                 },
-                "required": ["symbol", "lookback_days"],
+                "required": ["symbol"],
             },
-            handler=fetch_market_snapshot,
+            handler=lambda symbol, lookback_days=5: fetch_market_snapshot(
+                symbol, lookback_days, market_provider or company_provider
+            ),
         )
     )
     return registry
 
 
 def _collect_company_evidence(
+    registry: ToolRegistry,
     plan: EvidencePlan,
-) -> tuple[tuple[CompanyAnnouncement, ...], tuple[FinancialSnapshot, ...]]:
+    steps: list[AgentStep],
+) -> tuple[tuple[CompanyAnnouncement, ...], tuple[FinancialSnapshot, ...], list[str]]:
     announcements: list[CompanyAnnouncement] = []
     financials: list[FinancialSnapshot] = []
+    warnings: list[str] = []
     for symbol in plan.candidate_symbols:
         if "company_announcements" in plan.required_tools:
-            announcements.extend(fetch_company_announcements(symbol, "", ""))
+            result = registry.execute(
+                "fetch_company_announcements", {"symbol": symbol, "start_date": "", "end_date": ""}
+            )
+            steps.append(_step(f"fetch_company_announcements:{symbol}", result))
+            if result.status == "success":
+                announcements.extend(result.output)
+            else:
+                warnings.append(f"{symbol} 公告证据不可用：{result.error}")
         if "financial_reports" in plan.required_tools:
-            financials.extend(fetch_financial_reports(symbol, ("latest",)))
-    return tuple(announcements), tuple(financials)
+            result = registry.execute("fetch_financial_reports", {"symbol": symbol})
+            steps.append(_step(f"fetch_financial_reports:{symbol}", result))
+            if result.status == "success":
+                financials.extend(result.output)
+            else:
+                warnings.append(f"{symbol} 财报证据不可用：{result.error}")
+    return tuple(announcements), tuple(financials), warnings
 
 
-def _collect_market_evidence(plan: EvidencePlan) -> tuple[MarketSnapshot, ...]:
+def _collect_market_evidence(
+    registry: ToolRegistry,
+    plan: EvidencePlan,
+    steps: list[AgentStep],
+) -> tuple[tuple[MarketSnapshot, ...], list[str]]:
     if "market_snapshot" not in plan.required_tools:
-        return ()
-    return tuple(fetch_market_snapshot(symbol, 5) for symbol in plan.candidate_symbols)
+        return (), []
+    snapshots: list[MarketSnapshot] = []
+    warnings: list[str] = []
+    for symbol in plan.candidate_symbols:
+        result = registry.execute("fetch_market_snapshot", {"symbol": symbol, "lookback_days": 5})
+        steps.append(_step(f"fetch_market_snapshot:{symbol}", result))
+        if result.status == "success":
+            snapshots.append(result.output)
+        else:
+            warnings.append(f"{symbol} 行情证据不可用：{result.error}")
+    return tuple(snapshots), warnings
 
 
 def _collect_evidence(
@@ -469,7 +672,10 @@ def _collect_evidence(
                 source_type="company_announcement",
                 title=announcement.title,
                 url=announcement.url,
-                summary=announcement.summary or "待补充",
+                summary=(
+                    f"公告日期：{announcement.published_at or '未提供'}；"
+                    f"来源：{announcement.provider or '未提供'}"
+                ),
                 supports=(announcement.symbol,),
             )
         )
@@ -482,7 +688,9 @@ def _collect_evidence(
                 summary=(
                     f"收入：{_format_optional_number(financial.revenue)}；"
                     f"收入同比：{_format_optional_number(financial.revenue_yoy)}%；"
-                    f"净利润：{_format_optional_number(financial.net_profit)}"
+                    f"净利润：{_format_optional_number(financial.net_profit)}；"
+                    f"经营现金流：{_format_optional_number(financial.operating_cash_flow)}；"
+                    f"来源：{financial.provider or '未提供'}"
                 ),
                 supports=(financial.symbol,),
             )
@@ -494,8 +702,10 @@ def _collect_evidence(
                 title=f"{snapshot.symbol} 最近 {snapshot.lookback_days} 日行情",
                 url="",
                 summary=(
-                    f"收盘：{snapshot.close}；涨跌幅：{snapshot.pct_chg}%；"
-                    f"成交量：{snapshot.volume}；成交额：{snapshot.amount}"
+                    f"收盘：{snapshot.close}；区间涨跌幅："
+                    f"{_format_optional_number(snapshot.period_return_pct)}%；"
+                    f"成交量：{snapshot.volume}；成交额：{snapshot.amount}；"
+                    f"来源：{snapshot.provider or '未提供'}"
                 ),
                 supports=(snapshot.symbol,),
             )

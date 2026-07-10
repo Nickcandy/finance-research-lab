@@ -205,6 +205,49 @@ def test_chat_completions_client_reads_timeout_config(tmp_path) -> None:
     assert client.timeout_seconds == 90
 
 
+def test_chat_completions_client_sends_and_parses_tool_calls(tmp_path) -> None:
+    requests: list[object] = []
+
+    def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        requests.append(request)
+        return FakeHTTPResponse(
+            {
+                "model": "test-model",
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "fetch_market_snapshot",
+                                        "arguments": '{"symbol":"300308.SZ","lookback_days":5}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+            }
+        )
+
+    client = ChatCompletionsClient(api_key="test-key", env_path=tmp_path / "missing.env", urlopen=fake_urlopen)
+    response = client.tool_completion(
+        messages=[{"role": "user", "content": "查证据"}],
+        tools=[{"type": "function", "function": {"name": "fetch_market_snapshot", "parameters": {}}}],
+    )
+
+    body = json.loads(requests[0].data.decode("utf-8"))
+    assert body["tool_choice"] == "auto"
+    assert body["tools"][0]["function"]["name"] == "fetch_market_snapshot"
+    assert response.content == ""
+    assert response.raw["tool_calls"][0]["function"]["name"] == "fetch_market_snapshot"
+
+
 @pytest.mark.parametrize(
     "payload",
     [

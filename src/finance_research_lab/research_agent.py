@@ -19,6 +19,7 @@ def analyze_research_report_with_agent(
     base_url: str | None = None,
     urlopen: UrlOpen | None = None,
     env_path: str | Path = ".env",
+    evidence_context: list[dict[str, Any]] | None = None,
 ) -> ResearchReport:
     client_kwargs: dict[str, Any] = {
         "api_key": api_key,
@@ -31,7 +32,7 @@ def analyze_research_report_with_agent(
 
     client = ChatCompletionsClient(**client_kwargs)
     response = client.structured_completion(
-        messages=_build_messages(news, watchlist),
+        messages=_build_messages(news, watchlist, evidence_context),
         schema_name="research_report",
         schema=research_report_json_schema(),
     )
@@ -46,6 +47,7 @@ def analyze_research_report_with_agent(
 def _build_messages(
     news: RawNews,
     watchlist: list[WatchlistItem],
+    evidence_context: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     system = (
         "你是投资研究结构化分析器。只输出符合 JSON Schema 的对象，不输出 Markdown、解释或代码块。"
@@ -73,6 +75,7 @@ def _build_messages(
             }
             for item in watchlist
         ],
+        "evidence": evidence_context or [],
     }
     return [
         {"role": "system", "content": system},

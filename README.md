@@ -1,16 +1,19 @@
 # finance-research-lab
 
-一个面向个人投资研究和 AI Agent 作品集展示的本地研究工具。项目当前采用 URL-first 输入：从新闻 URL 或后续市场事件出发，拆解产业链影响，发现可能受影响的 A 股标的，并通过 tools 校验证据，最终生成可复盘的 Markdown 研究报告。
+一个面向个人投资研究和 AI Agent 作品集展示的 Event-driven A 股研究工具。目标产品主动发现新闻、公告和行情异动，把多个来源聚合成市场事件，再拆解产业链和供给卡点、发现 A 股候选，并通过 tools 校验证据，最终生成可复盘的 Markdown 研究报告。
+
+当前代码已实现 URL 手动研究入口和下游证据流程。URL 后续继续作为事件的 `source_url` 和单事件深挖入口，但不再是产品主输入。
 
 ## 目标
 
-`finance-research-lab` 解决五个问题：
+`finance-research-lab` 解决六个问题：
 
-1. **事件理解**：从新闻 URL 中提取事实，判断事件类型、主题和来源质量。
-2. **产业链拆解**：分析谁付钱、谁收钱、影响路径和利多利空方向。
-3. **A股候选发现**：从事件出发发现可能受影响的 A 股，不把 watchlist 当作候选边界。
-4. **工具校验与报告输出**：通过 tools 校验公司、代码、主营和证据，生成 Markdown 研究报告。
-5. **Agent 工程展示**：用 workflow、tools、structured output、fallback 和 agent steps 展示一个可解释的 AI Agent 雏形。
+1. **事件发现**：主动拉取近期新闻、公告和行情异动，识别值得研究的热点。
+2. **事件聚合**：把描述同一事件的多个来源去重、聚类，并保留全部来源。
+3. **产业链拆解**：分析谁付钱、谁收钱、影响路径，以及难扩产、难替代的供给卡点。
+4. **A股候选发现**：从事件和产业链卡点出发发现可能受影响的 A 股，不把 watchlist 当作候选边界。
+5. **工具校验与报告输出**：通过 tools 校验公司、代码、主营和证据，生成 Markdown 研究报告。
+6. **Agent 工程展示**：用 workflow、tools、structured output、fallback 和 agent steps 展示一个可解释的 AI Agent 雏形。
 
 核心原则：
 
@@ -20,7 +23,20 @@
 - `watchlist` 只是个人上下文、排序和复盘线索，不限制系统输出股票范围。
 - 先做小而完整的本地工具，后续再扩展 A 股数据源、行情指标和回测。
 
-## 当前 MVP
+## 目标 MVP
+
+```text
+新闻源 / 公司公告 / 行情异动
+→ NewsItem 标准化
+→ MarketEvent 去重与聚合
+→ 热点事件排序
+→ 产业链层级与供给卡点
+→ A股候选发现
+→ 公告 / 财报 / 行情证据核验
+→ reports/daily-radar.md
+```
+
+## 当前已实现路径
 
 ```text
 输入：
@@ -38,7 +54,7 @@
 - reports/*.md
 ```
 
-当前实现已经包含 `trace-news`、`radar` 和 `research-agent` 三个 CLI 入口。下一阶段会把股票映射从 watchlist 限制升级为 A 股候选发现与 tool 校验。
+当前实现已经包含 `trace-news`、`radar` 和 `research-agent` 三个 URL 驱动的 CLI 入口，以及 A 股 universe、BaoStock 日线行情主源、AkShare 公告 / 财报与行情 fallback、受控 Tool Calling。下一阶段新增主动事件发现入口；现有命令保留为手动深挖和下游调试工具。
 
 ## 项目结构
 
@@ -64,7 +80,7 @@ finance-research-lab/
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[akshare,baostock,dev]'
 pytest
 ```
 
@@ -149,11 +165,15 @@ fetch_news_tool        # 获取静态 HTML 并生成 RawNews
 → write_report_tool
 ```
 
-后续 A 股候选发现会扩展为：
+目标 Event-driven workflow 为：
 
 ```text
-fetch_news_tool
+discover_news_items
+→ normalize_news_items
+→ cluster_market_events
+→ rank_hot_events
 → analyze_event_with_llm
+→ map_value_chain_and_scarce_layers
 → discover_a_share_candidates
 → verify_candidates_with_tools
 → classify_impact
@@ -202,34 +222,41 @@ prompts/investment_research_agent.md
 - 模型接入、上下文控制与 Tool Calling 架构：[`docs/model-and-tooling-architecture.md`](docs/model-and-tooling-architecture.md)
 
 ```text
-V0 URL 新闻追源
+V0 URL 新闻追源（辅助入口）
 → V1 A股候选发现与验证
-→ V2 多 URL 投资雷达
-→ V3 行情/成交量/财务工具
+→ V1.5 证据工具与受控 Tool Calling
+→ V2 自动事件发现与每日雷达
+→ V3 Serenity 产业链卡点研究
 → V4 复盘与信号回测
 → V5 AI Agent 简历展示版
 ```
 
 ## 后续路线
 
-### Phase 1：URL 研究辅助
+### Phase 1：URL 研究辅助与证据工具
 
 - [x] 项目骨架和 README
 - [x] 示例 watchlist
 - [x] 静态 HTML 新闻 URL 抓取
 - [x] 热点新闻追源报告生成
 - [x] 多 URL 雷达报告
-- [ ] A 股候选发现 tool
-- [ ] A 股候选校验和待确认候选分组
+- [x] A 股候选发现与 universe 校验
+- [x] BaoStock 行情主源与 AkShare 公告、财报、行情 fallback
+- [x] 受控 Evidence Tool Calling
 
-### Phase 2：数据与信号
+### Phase 2：自动事件发现
 
-- [ ] AkShare / Tushare / yfinance 数据源适配
+- [ ] `NewsItem` / `MarketEvent` / `Theme` 模型
+- [ ] 一个可信事件源和最近 24 小时拉取
+- [ ] 事件去重、聚类和热点排序
+- [ ] Event-driven `daily-radar.md`
+- [ ] Serenity 产业链层级与供给卡点分析
+
+### Phase 3：稳定数据源与回测验证
+
+- [ ] Tushare 或其他稳定 provider
+- [ ] 公告正文 / PDF 解析
 - [ ] 涨跌幅、成交额变化、均线偏离、波动率、最大回撤
-- [ ] 每日 / 每周 Markdown 异动报告
-
-### Phase 3：回测验证
-
 - [ ] 双均线 / 动量 / 突破等基础策略
 - [ ] 手续费、滑点、调仓频率
 - [ ] 年化收益、Sharpe、最大回撤、胜率

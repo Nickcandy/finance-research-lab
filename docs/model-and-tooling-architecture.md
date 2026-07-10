@@ -1,6 +1,6 @@
 # 模型接入、上下文控制与 Tool Calling 架构
 
-> 更新时间：2026-06-30
+> 更新时间：2026-07-10
 
 ## 结论
 
@@ -18,18 +18,20 @@ agent_steps 记录过程
 
 ## 当前产品边界
 
-当前产品是 URL-first 的 A 股投资研究 Agent：
+目标产品是 Event-driven 的 A 股投资研究 Agent：
 
 ```text
-新闻 URL
-→ 事件理解
-→ 产业链影响
+新闻源 / 公司公告 / 行情异动
+→ NewsItem 标准化
+→ MarketEvent 去重与聚合
+→ 热点事件排序
+→ 产业链层级与供给卡点
 → A股候选发现
 → tool 校验
 → 研究报告
 ```
 
-第一阶段只覆盖 A 股。`watchlist` 是个人上下文和排序信号，不是候选股票边界。
+当前代码已经实现 URL 手动研究入口和下游证据工具，但尚未实现主动事件发现。URL 后续仍作为 `NewsItem.source_url` 和单事件手动深挖入口。第一阶段只覆盖 A 股；`watchlist` 是个人上下文和排序信号，不是候选股票边界。
 
 ## 推荐分层
 
@@ -55,8 +57,12 @@ src/finance_research_lab/
 workflow 决定研究流程怎么走，并记录每一步：
 
 ```text
-fetch_news_tool
+discover_news_items
+→ normalize_news_items
+→ cluster_market_events
+→ rank_hot_events
 → analyze_event_with_llm
+→ map_value_chain_and_scarce_layers
 → discover_a_share_candidates
 → verify_candidates_with_tools
 → classify_impact
@@ -67,8 +73,9 @@ fetch_news_tool
 原则：
 
 - 每一步都有明确输入、输出和失败状态。
-- 单个 URL 失败不能伪装成成功分析。
-- 多 URL 报告里，单条失败不影响其他成功项。
+- 单个来源失败不能伪装成成功事件。
+- 单个来源失败不影响同一事件的其他有效来源。
+- 同一事件的多个 URL 必须聚合，避免重复分析和重复候选。
 - 全部失败时不生成误导性报告。
 - 每一步写入 `AgentStep`，后续可持久化为 `agent_steps`。
 
@@ -76,9 +83,9 @@ fetch_news_tool
 
 LLM 适合做解释和假设生成：
 
-1. 摘要新闻事实。
+1. 从已聚合来源中总结事件事实。
 2. 判断事件类型和主题。
-3. 推导产业链影响。
+3. 推导系统变化、产业链层级和潜在供给卡点。
 4. 提出可能受影响的 A 股候选。
 5. 区分利多、利空、情绪映射和伪相关。
 6. 解释支持证据、反对证据和风险。
@@ -86,12 +93,19 @@ LLM 适合做解释和假设生成：
 
 LLM 不应该直接成为事实来源。候选股票、股票代码、行业、主营和行情状态需要 tools 校验。
 
+当前行情 tool 使用固定 provider chain：BaoStock 提供不复权日线主数据，AkShare 仅在主源失败、
+不支持代码或返回空数据时 fallback；公告和财报仍由 AkShare 提供。行情缓存 TTL 为 24 小时。
+
 ## Tools 职责
 
 tools 负责确定性或可追溯的工作：
 
 ```text
-fetch_news(url) -> RawNews
+fetch_event_sources(window, market) -> list[NewsItem]
+normalize_news_item(raw_item) -> NewsItem
+cluster_market_events(items) -> list[MarketEvent]
+rank_hot_events(events) -> list[MarketEvent]
+fetch_news(url) -> RawNews                  # 手动深挖辅助入口
 read_watchlist(path) -> list[WatchlistItem]
 lookup_a_share_company(query) -> CandidateCompany
 verify_candidate(company, event) -> VerificationResult
@@ -118,14 +132,18 @@ excluded_candidates      # 伪相关、证据不足或风险排除
 
 ```text
 RawNews                 # 新闻来源事实
+NewsItem                # 单个新闻、公告或异动来源
+MarketEvent             # 多来源聚合后的独立事件
+Theme                   # 多个事件形成的持续研究方向
 EventAnalysis           # 事件理解
 ValueChainTrace         # 产业链路径
+ScarceLayerAssessment   # 产业链卡点与证据强度
 CandidateStock          # A股候选
 CandidateVerification   # tool 校验结果
 StockImpact             # 利多/利空/映射分类
 ValidationTask          # 后续验证任务
-ResearchReport          # 单 URL 研究报告
-RadarReport             # 多 URL 汇总
+ResearchReport          # 单事件研究报告
+RadarReport             # 多事件每日研究雷达
 ```
 
 结构化输出的作用：
@@ -141,8 +159,9 @@ RadarReport             # 多 URL 汇总
 
 ```text
 System prompt：角色、边界、禁止直接荐股
-Task prompt：本次新闻和输出要求
-News context：标题、来源、正文摘要、URL
+Task prompt：本次事件和输出要求
+Event context：事件摘要、时间窗口和聚合来源
+News context：各来源标题、来源、正文摘要、URL
 Watchlist context：个人已关注股票和 thesis/risks
 Tool results：候选校验、公司信息、行情摘要
 Output schema：ResearchReport / Candidate schema
@@ -196,15 +215,15 @@ tests
 ## 面试讲法
 
 ```text
-我做了一个 URL-first 的 A 股投资研究 Agent。系统不是让 LLM 直接荐股，而是让 LLM 从新闻中提出事件假设和候选公司，再通过 tools 校验股票代码、主营、行业和后续行情状态。workflow 由代码控制，每一步记录 agent_steps，输出用 ResearchReport schema 约束，并保留 fallback、验证任务和复盘路径。这个项目展示了 Agent 工程里模型、工具、状态、结构化输出和可验证性的分工。
+我做了一个 Event-driven 的 A 股投资研究 Agent。系统主动发现新闻、公告和行情异动，把多个来源聚合成市场事件，再拆产业链和供给卡点、发现候选公司，并通过 tools 校验股票代码、主营、公告、财报和行情状态。workflow 由代码控制，每一步记录 agent_steps，输出用 schema 约束，并保留来源、fallback、验证任务和复盘路径。
 ```
 
 ## 下一步实现顺序
 
-1. 保持现有 URL-first workflow。
-2. 新增 A 股候选数据源或本地 universe。
-3. 新增 `lookup_a_share_company` / `verify_candidate` tool。
-4. 扩展模型，区分已校验候选、待确认候选和排除项。
-5. 更新报告渲染。
-6. 补测试：watchlist 外股票、校验失败、伪相关排除、LLM fallback。
-7. 再考虑行情、复盘、持久化和 LangGraph。
+1. 保留现有 URL workflow 作为手动深挖入口。
+2. 定义 `NewsItem`、`MarketEvent` 和 `Theme`。
+3. 接入一个可信事件源，拉取最近 24 小时内容。
+4. 实现标准化、去重聚类和热点排序。
+5. 对 Top 事件增加产业链层级和供给卡点分析。
+6. 复用现有 A 股 universe、公告、财报和行情 tools 校验候选。
+7. 输出 Event-driven `daily-radar.md` 并补来源失败、事件去重和候选证据测试。

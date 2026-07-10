@@ -1,24 +1,27 @@
 # Finance Research Lab 项目方案说明
 
-更新时间：2026-07-09
+更新时间：2026-07-10
 
 ## 1. 项目定位
 
-`finance-research-lab` 是一个本地金融研究辅助工具。它当前要解决的不是自动荐股，也不是自动交易，而是把一条新闻整理成一份可复盘的研究报告：
+`finance-research-lab` 是一个本地金融研究辅助工具。目标产品不是等待用户提交新闻 URL，而是主动发现近期热点和市场事件，把多个来源聚合成一个可研究事件，再生成可复盘的研究报告：
 
-- 这条新闻讲的是什么事件。
+- 最近发生了哪些值得研究的事件。
+- 哪些新闻、公告或行情异动属于同一个事件。
 - 谁付钱，谁收钱，产业链怎么传导。
-- 股票池里哪些标的可能相关。
+- 哪个产业链环节更难扩产或替代，哪些 A 股标的可能相关。
 - 哪些判断还需要验证。
 - 最终输出一份 Markdown 报告，方便放进 Obsidian、GitHub 或自己的研究库。
 
-一句话：当前项目的核心是“把新闻变成结构化研究卡片”。
+一句话：目标产品的核心是“主动发现事件，把热点变成有证据的产业链研究优先级”。
+
+当前代码已经实现 URL 手动研究入口、BaoStock + AkShare 证据链和受控 Tool Calling。URL 路径继续用于手动深挖和调试，但不再代表产品最终入口。
 
 后续新闻会接入可信新闻源，因此主流程不再把“验证新闻是真是假”作为重点。系统要验证的是另一件事：这条可信新闻是否真的会影响某些公司、影响路径是什么、财报和公告是否支持这个判断、市场价格和成交量是否已经反映。
 
 ## 2. 当前方案评价
 
-当前方案能跑通最小闭环，但还不是一个成熟的研究 Agent 方案。
+当前 URL 驱动方案能跑通最小闭环，但还不是目标中的 Event-driven 研究 Agent。
 
 它的优点是：
 
@@ -30,15 +33,16 @@
 它的问题也很明显：
 
 - 研究深度主要依赖单次 LLM 判断和本地关键词规则。
-- 没有行情、公告、财务、历史报告等证据源。
-- 没有真正的多轮 Agent loop。
+- 没有主动事件源、标准化、去重聚类和热点排序。
+- 行情、公告和财务证据已经接入原型，但来源覆盖和稳定性仍有限。
+- 已有受控 Tool Calling，但还没有“事件发现 → 卡点分析 → 候选发现”的完整循环。
 - 没有长期上下文，也没有 RAG。
 - 当前报告更像“新闻拆解卡片”，还不像完整投资研究流程。
 
 所以当前阶段更准确的定义是：
 
 ```text
-MVP：结构化新闻研究报告生成器
+当前实现：URL 驱动的结构化研究报告生成器
 ```
 
 不是：
@@ -49,7 +53,19 @@ MVP：结构化新闻研究报告生成器
 
 ## 3. 输入和输出
 
-### 输入
+### 目标输入
+
+主入口不要求用户提交 URL，而是指定市场和时间窗口：
+
+```text
+market: A股
+window: 最近 24 小时
+event_sources: 可信新闻源 / 公司公告 / 行情异动
+```
+
+系统内部把每个来源标准化为 `NewsItem`，再聚合为 `MarketEvent`。URL 是 `NewsItem.source_url`，不是主输入。
+
+### 当前辅助输入
 
 一条新闻链接：
 
@@ -92,30 +108,29 @@ symbol,name,market,themes,thesis,risks
 
 ```mermaid
 flowchart TD
-    A[可信新闻输入] --> B[提取事件要点]
-    C[读取本地股票池] --> D[整理候选公司]
+    A[新闻源 / 公司公告 / 行情异动] --> B[标准化 NewsItem]
+    B --> C[去重并聚合 MarketEvent]
+    C --> D[热点事件排序]
+    D --> E[判断事件类型与系统变化]
+    E --> F[拆产业链层级和供给卡点]
+    F --> G[发现 A股候选]
+    G --> H{需要查什么}
 
-    B --> E[判断事件类型]
-    D --> E
+    H --> I[公司公告 / 财报]
+    H --> J[行情 / 成交量]
+    H --> K[客户 / 产能 / 产业链证据]
 
-    E --> F[制定证据计划]
-    F --> G{需要查什么}
+    I --> L[汇总支持证据和反对证据]
+    J --> L
+    K --> L
 
-    G --> H[公司公告 / 财报]
-    G --> I[行情 / 成交量]
-    G --> J[上下游产业链]
-
-    H --> K[汇总支持证据和反对证据]
-    I --> K
-    J --> K
-
-    K --> L[生成结构化研究结果]
-    L --> M[校验字段、枚举值、股票代码]
-    M --> N[渲染 Markdown 报告]
-    N --> O[人工复核投资假设]
+    L --> M[生成结构化研究结果]
+    M --> N[校验字段、枚举值、股票代码]
+    N --> O[渲染每日研究雷达]
+    O --> P[人工复核投资假设]
 ```
 
-这个流程的重点不是验证新闻本身，而是验证“新闻 -> 公司 -> 业绩 / 估值 / 市场行为”的推导链。
+这个流程的重点不是验证单篇新闻本身，而是验证“多来源事件 -> 产业链卡点 -> 公司 -> 业绩 / 估值 / 市场行为”的推导链。
 
 ## 5. 代码分层
 
@@ -301,42 +316,44 @@ LLM_TIMEOUT_SECONDS=60
 
 ## 9. 后续数据源配置
 
-下面这些配置是下一阶段要加的，不是当前代码已经实现的能力。
+当前 V1.5 使用 BaoStock 作为 A 股盘后日线行情主源，AkShare 继续负责公告、财报，并在
+BaoStock 不可用、代码不支持或返回空数据时提供行情 fallback；两者都不需要 token。AkShare 证据
+缓存默认位于 `data/akshare_cache/`，BaoStock 行情缓存默认位于 `data/baostock_cache/`。
+行情缓存 TTL 为 24 小时；可用 `--refresh-evidence` 同时绕过两个行情缓存。
 
 公司公告和财报工具配置：
 
 ```env
-COMPANY_DATA_PROVIDER=akshare
-COMPANY_DATA_API_KEY=your_company_data_key_here
-COMPANY_DATA_BASE_URL=
-COMPANY_DATA_TIMEOUT_SECONDS=30
-TUSHARE_TOKEN=
+finance-lab sync-a-share-evidence --symbols 300308.SZ 600519.SH
 ```
 
 行情和成交量工具配置：
 
 ```env
-STOCK_DATA_PROVIDER=akshare
-STOCK_DATA_API_KEY=
-STOCK_DATA_BASE_URL=
-STOCK_DATA_TIMEOUT_SECONDS=30
-MARKET_LOOKBACK_DAYS=5
+finance-lab research-agent --url "https://example.com/news" \
+  --market-cache data/baostock_cache --refresh-evidence
 ```
 
 字段含义：
 
 | 配置项 | 含义 |
 | --- | --- |
-| `COMPANY_DATA_PROVIDER` | 公司公告 / 财报数据源，例如 tushare、交易所公告接口或本地文件 |
-| `COMPANY_DATA_API_KEY` | 公司数据源 key；AkShare 原型通常不需要，Tushare 需要 token |
-| `COMPANY_DATA_BASE_URL` | 自建或第三方公司数据 API 地址 |
-| `STOCK_DATA_PROVIDER` | 行情数据源，例如 akshare、tushare、yfinance |
-| `STOCK_DATA_API_KEY` | 行情数据源 key；AkShare / yfinance 原型通常不需要，Tushare 需要 token |
-| `STOCK_DATA_BASE_URL` | 自建或第三方行情 API 地址 |
-| `MARKET_LOOKBACK_DAYS` | 默认查看最近几个交易日，先用 5 天代表“本周” |
-| `TUSHARE_TOKEN` | 使用 Tushare provider 时需要 |
+| `sync-a-share-evidence` | 手动刷新指定股票的公告、财报和行情缓存 |
+| `--refresh-evidence` | 本次 Agent 报告强制刷新涉及候选的缓存 |
+| `--market-cache` | BaoStock 行情缓存目录，默认 `data/baostock_cache/` |
+| `data/akshare_cache/` | 不提交 Git 的本地 AkShare 公告、财报和 fallback 行情缓存 |
+| `data/baostock_cache/` | 不提交 Git 的本地 BaoStock 行情缓存 |
 
-下一阶段建议先做 provider adapter，不要把某个数据源写死在业务 workflow 里。
+行情 provider 顺序固定为 BaoStock → AkShare，不自动重试。两者都失败或字段缺失时，报告会保留
+两个原始错误并将候选维持为 `unverified`，不会回退为 mock 数据。
+
+`research-agent` 的证据层使用受控 Tool Calling。模型只能请求公司公告、财报或行情工具；每次调用的
+股票代码必须来自本次 A 股候选，行情窗口限制在 1 到 20 个交易日，公告日期限制在过去 90 天。最多
+执行三轮；同一 run 内相同工具和标准化参数只执行一次，重复 tool call 复用第一次结果。达到上限或
+模型不再请求工具后，系统用全部工具结果生成严格的 `ResearchReport`。模型或
+Function Calling 不可用时，系统回退到确定性证据计划，并在报告中标记 fallback 原因。模型没有调用
+足够工具时，workflow 只补查缺失的公司和行情证据。候选必须同时具备非空公告或财报证据、有效行情
+证据，才能标记为 `verified`；工具成功但返回空结果不算有效证据。
 
 目标工具：
 
@@ -344,7 +361,7 @@ MARKET_LOOKBACK_DAYS=5
 fetch_company_announcements(symbol, start_date, end_date)
   -> 公司公告列表
 
-fetch_financial_reports(symbol, periods)
+fetch_financial_reports(symbol)
   -> 财报摘要、收入、利润、现金流、毛利率等核心字段
 
 fetch_market_snapshot(symbol, lookback_days)
@@ -473,36 +490,33 @@ AI 思考 -> 调工具 -> 看结果 -> 再思考 -> 再调工具 -> 最终输出
 
 ## 14. 下一步建议
 
-如果你觉得当前方案太简单，下一步不要直接做 UI，也不要先做回测，而是做“证据层 + 多轮研究流程”。
+证据层和受控 Tool Calling 已经完成原型。下一步不要继续扩展手工多 URL 输入，也不要先做 UI 或回测，而是实现“自动事件发现 + 每日研究雷达”。
 
 优先级建议：
 
-1. 明确新闻源是可信输入
-   后续新闻源接入后，系统不再把“找最早新闻来源”作为主验证任务。验证重点改为：公司影响是否成立、财报和公告是否支持、市场是否已经反映。
+1. 定义 `NewsItem`、`MarketEvent` 和 `Theme`
+   `NewsItem` 表示单个新闻、公告或异动来源；`MarketEvent` 表示多来源聚合后的独立事件；`Theme` 表示多个事件形成的持续方向。
 
-2. 新增公司公告和财报工具
-   先定义 provider adapter 和返回结构，再接真实数据源。第一版只需要查公告标题、发布日期、公告类型、摘要，以及最近几期核心财务指标。
+2. 接入一个可信事件源
+   第一版只拉取最近 24 小时内容。单个来源失败必须可见，但不能中断其他来源。
 
-3. 新增行情和成交量工具
-   支持查今天和最近 5 个交易日的价格、涨跌幅、成交量、成交额。先做快照，不要一开始就做复杂技术指标。
+3. 实现标准化、去重和事件聚类
+   同一事件的多个 URL 只分析一次，同时保留全部 `source_url`。
 
-4. 做事件类型判断
-   先把事件分成几类：订单 / 合同、业绩 / 指引、政策 / 监管、涨价 / 供需、资本开支、产品发布、风险暴露、纯情绪题材。
+4. 实现热点排序
+   第一版只使用来源数量、来源可信度、发布时间、公司公告命中和行情 / 成交量反应，不引入复杂模型。
 
-5. 做证据计划
-   不同事件类型对应不同证据：订单看公告和客户；业绩看财报；涨价看供需和价格；资本开支看上下游；风险暴露看公告和市场反应。
+5. 复用现有研究下游
+   对 Top 5 事件继续调用现有 A 股 universe、公告、财报、行情和受控 Tool Calling。
 
-6. 改报告结构
-   把报告改成“结论 + 支持证据 + 反对证据 + 市场反应 + 待验证”。不要只写影响映射。
-
-7. 最后再做真正 Agent loop
-   当公告、财报、行情工具稳定后，再让模型按事件类型决定下一步该查什么。
+6. 接入 Serenity 式卡点分析
+   先排产业链层级和难扩产、难替代的环节，再排公司，并输出证据强度、反方理由和判断降级条件。
 
 更具体地说，下一步最值得做的是：
 
 ```text
-把当前 ResearchReport 升级成 Evidence-first 多轮研究报告：
-事件类型 -> 证据计划 -> 调工具 -> 整理证据 -> 判断影响 -> 输出报告。
+把当前 URL 研究 workflow 升级成 Event-driven 每日研究雷达：
+事件源 -> NewsItem -> MarketEvent -> 热点排序 -> 产业链卡点 -> 候选发现 -> 证据核验 -> 输出报告。
 ```
 
 这样项目会从“新闻摘要工具”往“研究系统”靠近。
@@ -510,8 +524,10 @@ AI 思考 -> 调工具 -> 看结果 -> 再思考 -> 再调工具 -> 最终输出
 关于“市场上发生的一类事件怎么分析”，先不要追求复杂模型。第一版就用一个朴素框架：
 
 ```text
-事件是什么
+最近有哪些事件
+-> 哪些来源属于同一事件
 -> 谁受益 / 谁受损
+-> 哪个环节更难扩产或替代
 -> 上游是谁
 -> 下游是谁
 -> 哪些公司在股票池里

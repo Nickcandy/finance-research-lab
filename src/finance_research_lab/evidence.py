@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .akshare_evidence import AkShareEvidenceProvider
+from .market_evidence import MarketEvidenceProvider
 from .models import (
     CompanyAnnouncement,
     EventClassification,
@@ -50,7 +52,10 @@ def classify_event(
     )
 
 
-def build_evidence_plan(classification: EventClassification) -> EvidencePlan:
+def build_evidence_plan(
+    classification: EventClassification,
+    candidate_symbols: tuple[str, ...] | None = None,
+) -> EvidencePlan:
     required_tools = ["market_snapshot", "value_chain"]
     questions = [
         "相关公司是否处在事件上下游的关键位置？",
@@ -68,7 +73,7 @@ def build_evidence_plan(classification: EventClassification) -> EvidencePlan:
 
     return EvidencePlan(
         event_type=classification.event_type,
-        candidate_symbols=classification.candidate_symbols,
+        candidate_symbols=candidate_symbols if candidate_symbols is not None else classification.candidate_symbols,
         required_tools=tuple(dict.fromkeys(required_tools)),
         questions=tuple(questions),
     )
@@ -78,51 +83,26 @@ def fetch_company_announcements(
     symbol: str,
     start_date: str,
     end_date: str,
+    provider: AkShareEvidenceProvider | None = None,
 ) -> tuple[CompanyAnnouncement, ...]:
-    del start_date, end_date
-    return (
-        CompanyAnnouncement(
-            symbol=symbol,
-            title=f"{symbol} 相关公告摘要待接入",
-            announcement_type="mock",
-            published_at="待补充",
-            summary="V1.5 mock provider：后续接入巨潮、交易所或 Tushare 公告列表。",
-        ),
-    )
+    return (provider or AkShareEvidenceProvider()).announcements(symbol, start_date, end_date)
 
 
 def fetch_financial_reports(
     symbol: str,
     periods: tuple[str, ...],
+    provider: AkShareEvidenceProvider | None = None,
 ) -> tuple[FinancialSnapshot, ...]:
-    report_period = periods[0] if periods else "latest"
-    return (
-        FinancialSnapshot(
-            symbol=symbol,
-            report_period=report_period,
-            revenue=100.0,
-            revenue_yoy=12.0,
-            net_profit=10.0,
-            net_profit_yoy=8.0,
-            gross_margin=30.0,
-            operating_cash_flow=6.0,
-        ),
-    )
+    del periods
+    return (provider or AkShareEvidenceProvider()).financials(symbol)
 
 
-def fetch_market_snapshot(symbol: str, lookback_days: int) -> MarketSnapshot:
-    return MarketSnapshot(
-        symbol=symbol,
-        trade_date="待接入",
-        open=100.0,
-        high=108.0,
-        low=98.0,
-        close=106.0,
-        pct_chg=5.6,
-        volume=1200000.0,
-        amount=250000000.0,
-        lookback_days=lookback_days,
-    )
+def fetch_market_snapshot(
+    symbol: str,
+    lookback_days: int,
+    provider: MarketEvidenceProvider | None = None,
+) -> MarketSnapshot:
+    return (provider or AkShareEvidenceProvider()).market(symbol, lookback_days)
 
 
 def score_value_chain_relevance(
