@@ -6,7 +6,7 @@ from finance_research_lab.evidence import (
     fetch_market_snapshot,
     score_value_chain_relevance,
 )
-from finance_research_lab.models import CompanyAnnouncement, FinancialSnapshot, MarketSnapshot, RawNews, WatchlistItem
+from finance_research_lab.models import CompanyAnnouncement, FinancialSnapshot, MarketSnapshot, NewsItem, WatchlistItem
 
 
 def test_classify_event_detects_capex_and_candidates() -> None:
@@ -56,8 +56,8 @@ def test_score_value_chain_relevance_uses_zero_to_three_scale() -> None:
     assert score.revenue_elasticity_score == 3
 
 
-def _news() -> RawNews:
-    return RawNews(
+def _news() -> NewsItem:
+    return NewsItem(
         headline="AI data center capex increases optical module demand",
         source="Example News",
         url="https://news.example.com/ai-capex",

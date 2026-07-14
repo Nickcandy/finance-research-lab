@@ -18,6 +18,7 @@ venv/
 !/data/a_share_universe.csv
 /data/akshare_cache/
 /data/baostock_cache/
+/data/event_cache/
 /reports/*.md
 !/reports/.gitkeep
 

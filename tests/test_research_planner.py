@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from finance_research_lab.models import RawNews, ResearchTask, WatchlistItem
+from finance_research_lab.models import NewsItem, ResearchTask, WatchlistItem
 from finance_research_lab.research_planner import (
     fallback_research_tasks,
     plan_research_tasks,
@@ -98,8 +98,8 @@ def test_plan_research_tasks_falls_back_when_api_key_is_missing(tmp_path) -> Non
     assert tasks[0].question == "是否能找到最早官方来源或可靠媒体原文？"
 
 
-def _news() -> RawNews:
-    return RawNews(
+def _news() -> NewsItem:
+    return NewsItem(
         headline="AI capex increases",
         source="Example News",
         url="https://news.example.com/ai-capex",

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .agent_models import ToolResult
-from .models import AShareCompany, NewsTrace, RawNews, ResearchReport, WatchlistItem
+from .models import AShareCompany, NewsItem, NewsTrace, ResearchReport, WatchlistItem
 from .news_fetcher import UrlOpen as FetchUrlOpen
 from .news_fetcher import fetch_news
 from .news_trace import (
@@ -48,7 +48,7 @@ def fetch_news_tool(url: str, *, urlopen: FetchUrlOpen | None = None) -> ToolRes
 
 
 def trace_news_tool(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     a_share_universe: list[AShareCompany] | None = None,
     **agent_kwargs: Any,

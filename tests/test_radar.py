@@ -5,7 +5,7 @@ from datetime import date
 from finance_research_lab.agent_models import ToolResult
 from finance_research_lab.models import (
     EventAnalysis,
-    RawNews,
+    NewsItem,
     ResearchReport,
     StockImpact,
     ValidationTask,
@@ -18,7 +18,7 @@ from finance_research_lab.workflow import run_radar_workflow
 def test_run_radar_workflow_multiple_urls(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "finance_research_lab.workflow.fetch_news_tool",
-        lambda url: ToolResult("fetch_news", "success", RawNews(_headline_for_url(url), "Example", url)),
+        lambda url: ToolResult("fetch_news", "success", NewsItem(_headline_for_url(url), "Example", url)),
     )
     monkeypatch.setattr(
         "finance_research_lab.workflow.trace_news_tool",
@@ -45,7 +45,7 @@ def test_run_radar_workflow_one_url_fails(tmp_path, monkeypatch) -> None:
     def fetch(url: str) -> ToolResult:
         if url.endswith("/bad"):
             return ToolResult("fetch_news", "error", None, "network timeout")
-        return ToolResult("fetch_news", "success", RawNews("AI capex expands", "Example", url))
+        return ToolResult("fetch_news", "success", NewsItem("AI capex expands", "Example", url))
 
     monkeypatch.setattr("finance_research_lab.workflow.fetch_news_tool", fetch)
     monkeypatch.setattr(
@@ -86,7 +86,7 @@ def test_run_radar_workflow_all_fail(tmp_path, monkeypatch) -> None:
 
 def test_radar_report_sections() -> None:
     long_term = _report(
-        RawNews("AI capex expands", "Example", "https://news.example.com/ai"),
+        NewsItem("AI capex expands", "Example", "https://news.example.com/ai"),
         stage="待判断",
         action_state="放观察池",
         impact=StockImpact(
@@ -99,7 +99,7 @@ def test_radar_report_sections() -> None:
         ),
     )
     short_term = _report(
-        RawNews("Compute order lands", "Example", "https://news.example.com/order"),
+        NewsItem("Compute order lands", "Example", "https://news.example.com/order"),
         stage="启动",
         action_state="可小仓试",
         impact=StockImpact(
@@ -112,7 +112,7 @@ def test_radar_report_sections() -> None:
         ),
     )
     risk = _report(
-        RawNews("Theme overheats", "Example", "https://news.example.com/hot"),
+        NewsItem("Theme overheats", "Example", "https://news.example.com/hot"),
         stage="高潮",
         action_state="高潮勿追",
         impact=StockImpact(
@@ -156,7 +156,7 @@ def _headline_for_url(url: str) -> str:
 
 
 def _report(
-    news: RawNews,
+    news: NewsItem,
     *,
     stage: str = "待判断",
     action_state: str = "放观察池",

@@ -353,14 +353,14 @@ source registry。LLM 不负责随机寻找网站，只参与事件理解、聚�
 
 | 类型 | 第一版主源 | 备用 / 后续 | 职责 |
 | --- | --- | --- | --- |
-| 财经新闻 | AkShare `stock_info_global_ths()` | `stock_info_global_futu()`；`stock_info_global_cls()` 辅助确认 | 主动发现政策、涨价、订单、资本开支和产品发布 |
+| 财经新闻 | 同花顺财经直播分页接口 | AkShare `stock_info_global_futu()`；`stock_info_global_cls()` 辅助确认 | 主动发现政策、涨价、订单、资本开支和产品发布 |
 | 公司公告 | 巨潮资讯最新公告列表 | 现有 `stock_zh_a_disclosure_report_cninfo()` 单股验证；后续 Tushare | 发现合同、业绩预告、并购、回购和风险提示 |
 | 行情异动 | 低频 AkShare `stock_zh_a_spot()` 新浪全市场快照 | 正式方案使用 Tushare `daily(trade_date=...)` | 发现放量、成交额和板块扩散信号 |
 | 政策产业 | 国务院、发改委、工信部、证监会官方列表页 | 后续增加交易所和产业协会 | 发现高可信政策、标准、供给和产业变化 |
 
 接入约束：
 
-- `stock_info_global_ths()` 只返回最近 20 条，因此每 5-10 分钟拉取并落本地缓存，通过 URL 和内容指纹去重；富途快讯作为失败 fallback，财联社用于交叉确认。
+- AkShare `stock_info_global_ths()` 包装函数只请求第一页；底层同花顺接口支持分页。`ThsNewsSource` 每日运行一次，分页拉取最近 24 小时内容，通过 URL 和内容指纹去重，并写入 `data/event_cache/ths/YYYY-MM-DD.json` 原始快照。
 - 巨潮最新公告列表负责发现，现有按 symbol 的 AkShare 巨潮接口负责候选验证，禁止为了发现事件而遍历全部 A 股。
 - 新浪全市场快照只做低频原型，避免反复请求导致临时封禁；东方财富全市场接口不作为主源。BaoStock 继续只验证 Top 候选，不遍历全市场。
 - 政策源分别实现轻量 HTML / JSON adapter，保留标题、发布时间、发布机构、分类、详情 URL 和正文摘要。
@@ -369,7 +369,7 @@ source registry。LLM 不负责随机寻找网站，只参与事件理解、聚�
 实现顺序固定为：
 
 ```text
-AkShareThsNewsSource
+ThsNewsSource
 → CninfoLatestAnnouncementSource
 → SinaMarketAnomalySource（后续可替换为 Tushare）
 → MiitPolicySource / NdrcPolicySource / GovPolicySource / CsrcPolicySource
@@ -544,7 +544,7 @@ pytest 通过
 
 ```text
 Task 1：定义 NewsItem / MarketEvent / Theme
-Task 2：接入 `AkShareThsNewsSource`，每 5-10 分钟拉取并形成 24 小时本地窗口
+Task 2：接入 `ThsNewsSource`，每日分页拉取最近 24 小时内容并保存原始快照
 Task 3：实现事件去重、聚类和热点排序
 Task 4：输出 Event-driven daily-radar.md
 Task 5：接入巨潮最新公告列表和全市场行情异动源

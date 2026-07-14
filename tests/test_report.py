@@ -3,7 +3,7 @@ from datetime import date
 from finance_research_lab.models import (
     EventAnalysis,
     NewsTrace,
-    RawNews,
+    NewsItem,
     ResearchReport,
     StockImpact,
     ValidationTask,
@@ -35,7 +35,7 @@ def test_render_news_trace_contains_core_sections() -> None:
 
 def test_render_research_report_contains_agent_ready_sections() -> None:
     report = ResearchReport(
-        raw_news=RawNews(headline="AI capex increases", source="manual"),
+        raw_news=NewsItem(headline="AI capex increases", source="manual"),
         event=EventAnalysis(
             event_type="资本开支 / 产能扩张",
             themes=("AI", "数据中心"),

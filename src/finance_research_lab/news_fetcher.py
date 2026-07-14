@@ -5,7 +5,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .models import RawNews
+from .models import NewsItem
 
 UrlOpen = Callable[[Request, int], Any]
 
@@ -23,7 +23,7 @@ def fetch_news(
     *,
     urlopen: UrlOpen = _default_urlopen,
     timeout: int = 15,
-) -> RawNews:
+) -> NewsItem:
     parsed_url = urlparse(url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise ValueError("News URL must use http or https")
@@ -60,7 +60,7 @@ def fetch_news(
         or parser.metadata.get("pubdate")
         or ""
     )
-    return RawNews(
+    return NewsItem(
         headline=headline,
         source=source,
         url=url,

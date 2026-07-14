@@ -54,7 +54,7 @@
 - reports/*.md
 ```
 
-当前实现已经包含 `trace-news`、`radar` 和 `research-agent` 三个 URL 驱动的 CLI 入口，以及 A 股 universe、BaoStock 日线行情主源、AkShare 公告 / 财报与行情 fallback、受控 Tool Calling。下一阶段新增主动事件发现入口；现有命令保留为手动深挖和下游调试工具。
+当前实现已经包含 `trace-news`、`radar` 和 `research-agent` 三个 URL 驱动的 CLI 入口，以及 A 股 universe、BaoStock 日线行情主源、AkShare 公告 / 财报与行情 fallback、受控 Tool Calling。V2 已加入事件模型和每日分页拉取最近 24 小时同花顺新闻的 `ThsNewsSource`；下一步实现事件聚类、热点排序和主动发现入口。现有 URL 命令继续作为手动深挖和下游调试工具。
 
 ## 项目结构
 
@@ -158,7 +158,7 @@ finance-lab research-agent \
 当前版本不是自由循环的黑盒 Agent，而是一个 **代码控制的 Agent-shaped workflow**。真实 Agent 会优先输出 Agent-ready `ResearchReport`；失败时规则 fallback 会填充同一套结构：
 
 ```text
-fetch_news_tool        # 获取静态 HTML 并生成 RawNews
+fetch_news_tool        # 获取静态 HTML 并生成 NewsItem
 → read_watchlist_tool
 → trace_news_tool      # LLM Structured Outputs 优先，规则 fallback 保底
 → render_report_tool   # 从 ResearchReport 渲染 Markdown
@@ -246,8 +246,8 @@ V0 URL 新闻追源（辅助入口）
 
 ### Phase 2：自动事件发现
 
-- [ ] `NewsItem` / `MarketEvent` / `Theme` 模型
-- [ ] AkShare 同花顺财经直播源和最近 24 小时本地事件窗口
+- [x] `NewsItem` / `MarketEvent` / `Theme` 模型
+- [x] 同花顺财经直播分页源和最近 24 小时原始快照
 - [ ] 巨潮最新公告、全市场行情异动和官方政策 source adapters
 - [ ] 事件去重、聚类和热点排序
 - [ ] Event-driven `daily-radar.md`

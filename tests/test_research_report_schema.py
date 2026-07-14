@@ -1,5 +1,6 @@
 import pytest
 
+from finance_research_lab.models import NewsItem
 from finance_research_lab.research_report_schema import (
     parse_research_report,
     research_report_json_schema,
@@ -77,6 +78,7 @@ def test_research_report_json_schema_is_strict() -> None:
 def test_parse_research_report_accepts_valid_payload() -> None:
     report = parse_research_report(_valid_payload())
 
+    assert isinstance(report.raw_news, NewsItem)
     assert report.raw_news.headline == "AI capex increases"
     assert report.event.themes == ("AI", "数据中心")
     assert report.stock_impacts[0].symbol == "300308.SZ"

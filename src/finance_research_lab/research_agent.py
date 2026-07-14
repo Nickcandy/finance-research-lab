@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from .llm.chat_completions_client import ChatCompletionsClient, UrlOpen
-from .models import RawNews, ResearchReport, WatchlistItem
+from .models import NewsItem, ResearchReport, WatchlistItem
 from .research_report_schema import parse_research_report, research_report_json_schema
 
 
 def analyze_research_report_with_agent(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     *,
     api_key: str | None = None,
@@ -45,7 +45,7 @@ def analyze_research_report_with_agent(
 
 
 def _build_messages(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     evidence_context: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:

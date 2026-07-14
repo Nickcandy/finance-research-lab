@@ -8,7 +8,7 @@ from typing import Any
 from .agent_models import ToolResult
 from .agents.tools import ToolRegistry
 from .llm.chat_completions_client import ChatCompletionsClient
-from .models import RawNews, ResearchReport
+from .models import NewsItem, ResearchReport
 
 MAX_TOOL_ROUNDS = 3
 EVIDENCE_TOOL_NAMES = {
@@ -28,7 +28,7 @@ class ToolCallingOutcome:
 def run_evidence_tool_calls(
     client: ChatCompletionsClient,
     registry: ToolRegistry,
-    news: RawNews,
+    news: NewsItem,
     report: ResearchReport,
 ) -> ToolCallingOutcome:
     candidates = {impact.symbol for impact in report.stock_impacts if impact.market == "A股"}

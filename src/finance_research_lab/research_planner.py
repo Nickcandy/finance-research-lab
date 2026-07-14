@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .llm.chat_completions_client import ChatCompletionsClient, UrlOpen
-from .models import RawNews, ResearchTask, WatchlistItem
+from .models import NewsItem, ResearchTask, WatchlistItem
 from .research_report_schema import VALIDATION_STATUSES, _object_schema
 
 
@@ -28,7 +28,7 @@ def research_tasks_json_schema() -> dict[str, Any]:
 
 
 def plan_research_tasks(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     *,
     api_key: str | None = None,
@@ -55,7 +55,7 @@ def plan_research_tasks(
 
 
 def analyze_research_tasks_with_agent(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     *,
     api_key: str | None = None,
@@ -87,7 +87,7 @@ def analyze_research_tasks_with_agent(
 
 
 def fallback_research_tasks(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
 ) -> tuple[ResearchTask, ...]:
     del news, watchlist
@@ -139,7 +139,7 @@ def parse_research_tasks(data: dict[str, Any]) -> tuple[ResearchTask, ...]:
 
 
 def _build_messages(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
 ) -> list[dict[str, str]]:
     system = (

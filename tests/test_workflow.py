@@ -4,7 +4,7 @@ from finance_research_lab.models import (
     AShareCompany,
     FinancialSnapshot,
     MarketSnapshot,
-    RawNews,
+    NewsItem,
     StockImpact,
 )
 from finance_research_lab.news_trace import build_research_report
@@ -293,7 +293,7 @@ def _successful_fetch(url: str):
     return ToolResult(
         "fetch_news",
         "success",
-        RawNews(
+        NewsItem(
             headline="AI data center capex increases optical module demand",
             source="Example News",
             url=url,
@@ -304,7 +304,7 @@ def _successful_fetch(url: str):
 
 
 def _candidate_report(verification_status="verified"):
-    news = RawNews("AI capex", "test", body="AI optical module demand")
+    news = NewsItem("AI capex", "test", body="AI optical module demand")
     report = build_research_report(
         news,
         [],

@@ -9,6 +9,7 @@ ImpactType = Literal["direct", "indirect", "sentiment", "negative", "false_posit
 ImpactStrength = Literal["high", "medium", "low", "unknown"]
 VerificationStatus = Literal["verified", "unverified", "excluded"]
 ValidationStatus = Literal["pending", "done", "blocked"]
+EventSourceType = Literal["news", "announcement", "market_anomaly", "policy"]
 EvidenceSourceType = Literal[
     "news",
     "watchlist",
@@ -76,12 +77,31 @@ class NewsTrace:
 
 
 @dataclass(frozen=True)
-class RawNews:
+class NewsItem:
     headline: str
     source: str
     url: str = ""
     published_at: str = ""
     body: str = ""
+    source_type: EventSourceType = "news"
+
+
+@dataclass(frozen=True)
+class MarketEvent:
+    title: str
+    items: tuple[NewsItem, ...]
+    summary: str = ""
+    themes: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def source_urls(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(item.url for item in self.items if item.url))
+
+
+@dataclass(frozen=True)
+class Theme:
+    name: str
+    events: tuple[MarketEvent, ...]
 
 
 @dataclass(frozen=True)
@@ -218,7 +238,7 @@ class ValueChainScore:
 
 @dataclass(frozen=True)
 class ResearchReport:
-    raw_news: RawNews
+    raw_news: NewsItem
     event: EventAnalysis
     value_chain: ValueChainTrace
     stock_impacts: tuple[StockImpact, ...]

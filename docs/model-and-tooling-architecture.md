@@ -105,7 +105,7 @@ fetch_event_sources(window, market) -> list[NewsItem]
 normalize_news_item(raw_item) -> NewsItem
 cluster_market_events(items) -> list[MarketEvent]
 rank_hot_events(events) -> list[MarketEvent]
-fetch_news(url) -> RawNews                  # 手动深挖辅助入口
+fetch_news(url) -> NewsItem                 # 手动深挖辅助入口
 read_watchlist(path) -> list[WatchlistItem]
 lookup_a_share_company(query) -> CandidateCompany
 verify_candidate(company, event) -> VerificationResult
@@ -131,7 +131,7 @@ excluded_candidates      # 伪相关、证据不足或风险排除
 推荐概念：
 
 ```text
-RawNews                 # 新闻来源事实
+NewsItem                # 新闻、公告、行情异动或政策来源事实
 NewsItem                # 单个新闻、公告或异动来源
 MarketEvent             # 多来源聚合后的独立事件
 Theme                   # 多个事件形成的持续研究方向

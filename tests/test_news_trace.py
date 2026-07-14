@@ -1,5 +1,5 @@
 from finance_research_lab.news_trace import build_research_report, build_trace, infer_themes
-from finance_research_lab.models import RawNews, WatchlistItem
+from finance_research_lab.models import NewsItem, WatchlistItem
 
 
 def test_infer_themes_for_ai_capex() -> None:
@@ -25,7 +25,7 @@ def test_build_research_report_maps_event_chain_and_stock_impacts() -> None:
     ]
 
     report = build_research_report(
-        RawNews(
+        NewsItem(
             headline="AI data center capex increases optical module demand",
             source="Example News",
             url="https://news.example.com/ai-capex",

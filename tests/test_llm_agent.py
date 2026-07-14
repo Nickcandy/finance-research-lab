@@ -7,7 +7,7 @@ import pytest
 
 from finance_research_lab.agent_models import ToolResult
 from finance_research_lab.llm.chat_completions_client import ChatCompletionsClient
-from finance_research_lab.models import RawNews, WatchlistItem
+from finance_research_lab.models import NewsItem, WatchlistItem
 from finance_research_lab.news_trace import build_research_report
 from finance_research_lab.research_agent import analyze_research_report_with_agent
 from finance_research_lab.tools import trace_news_tool
@@ -89,8 +89,8 @@ def _report_payload(reasoning: str = "Agent generated strict report") -> dict[st
     }
 
 
-def _news() -> RawNews:
-    return RawNews(
+def _news() -> NewsItem:
+    return NewsItem(
         headline="AI capex increases",
         source="Example News",
         url="https://news.example.com/ai-capex",

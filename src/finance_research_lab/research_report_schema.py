@@ -4,7 +4,7 @@ from typing import Any
 
 from .models import (
     EventAnalysis,
-    RawNews,
+    NewsItem,
     ResearchReport,
     StockImpact,
     ValidationTask,
@@ -145,8 +145,8 @@ def _object_schema(properties: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _parse_raw_news(data: dict[str, Any]) -> RawNews:
-    return RawNews(
+def _parse_raw_news(data: dict[str, Any]) -> NewsItem:
+    return NewsItem(
         headline=_string(data.get("headline"), "raw_news.headline"),
         source=_string(data.get("source"), "raw_news.source"),
         url=_string(data.get("url"), "raw_news.url"),

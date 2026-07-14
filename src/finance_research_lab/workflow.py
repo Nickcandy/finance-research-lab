@@ -26,7 +26,7 @@ from .models import (
     EvidencePlan,
     FinancialSnapshot,
     MarketSnapshot,
-    RawNews,
+    NewsItem,
     ResearchAgentResult,
     ResearchReport,
     ResearchTask,
@@ -607,7 +607,7 @@ def _collect_market_evidence(
 
 def _collect_evidence(
     *,
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     report: ResearchReport,
     tasks: tuple[ResearchTask, ...],

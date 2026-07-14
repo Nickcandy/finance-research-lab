@@ -6,7 +6,7 @@ from finance_research_lab.llm.base import LLMResponse
 from finance_research_lab.models import (
     EventAnalysis,
     MarketSnapshot,
-    RawNews,
+    NewsItem,
     ResearchReport,
     StockImpact,
     ValueChainTrace,
@@ -189,8 +189,8 @@ def _tool(name, handler) -> ToolSpec:
     return ToolSpec(name, name, {"type": "object", "properties": {}}, handler)
 
 
-def _news() -> RawNews:
-    return RawNews("AI capex", "test", body="AI optical module demand")
+def _news() -> NewsItem:
+    return NewsItem("AI capex", "test", body="AI optical module demand")
 
 
 def _report() -> ResearchReport:

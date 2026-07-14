@@ -1,10 +1,10 @@
-from finance_research_lab.models import RawNews, StockImpact, WatchlistItem
+from finance_research_lab.models import NewsItem, StockImpact, WatchlistItem
 from finance_research_lab.news_trace import build_research_report
 
 
 def test_build_research_report_can_include_verified_a_share_outside_watchlist() -> None:
     report = build_research_report(
-        RawNews(
+        NewsItem(
             headline="AI data center capex increases optical module demand",
             source="Example News",
             url="https://news.example.com/ai-capex",
@@ -32,7 +32,7 @@ def test_build_research_report_can_include_verified_a_share_outside_watchlist() 
 
 def test_build_research_report_marks_watchlist_hit_without_limiting_candidates() -> None:
     report = build_research_report(
-        RawNews(
+        NewsItem(
             headline="AI data center capex increases optical module demand",
             source="Example News",
             body="AI data center capex drives optical module demand.",
@@ -52,7 +52,7 @@ def test_build_research_report_marks_watchlist_hit_without_limiting_candidates()
 
 def test_build_research_report_separates_unverified_llm_candidates() -> None:
     report = build_research_report(
-        RawNews(
+        NewsItem(
             headline="AI data center capex increases optical module demand",
             source="Example News",
             body="AI data center capex drives optical module demand.",

@@ -7,7 +7,7 @@ from .models import (
     AShareCompany,
     EventAnalysis,
     NewsTrace,
-    RawNews,
+    NewsItem,
     ResearchReport,
     StockImpact,
     ValidationTask,
@@ -142,7 +142,7 @@ def build_trace(headline: str, source: str, watchlist: list[WatchlistItem]) -> N
 
 
 def build_research_report(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
     a_share_universe: list[AShareCompany] | None = None,
     proposed_impacts: tuple[StockImpact, ...] = (),

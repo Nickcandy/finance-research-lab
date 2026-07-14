@@ -8,7 +8,7 @@ from .models import (
     EvidencePlan,
     FinancialSnapshot,
     MarketSnapshot,
-    RawNews,
+    NewsItem,
     ValueChainScore,
     WatchlistItem,
 )
@@ -16,7 +16,7 @@ from .news_trace import infer_themes
 
 
 def classify_event(
-    news: RawNews,
+    news: NewsItem,
     watchlist: list[WatchlistItem],
 ) -> EventClassification:
     text = f"{news.headline} {news.body}".lower()
@@ -106,7 +106,7 @@ def fetch_market_snapshot(
 
 
 def score_value_chain_relevance(
-    news: RawNews,
+    news: NewsItem,
     item: WatchlistItem,
 ) -> ValueChainScore:
     themes = infer_themes(f"{news.headline} {news.body}")

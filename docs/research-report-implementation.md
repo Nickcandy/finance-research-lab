@@ -530,8 +530,9 @@ class EventSource(Protocol):
 
 #### 财经新闻
 
-第一版实现 `AkShareThsNewsSource`，调用 `stock_info_global_ths()`，映射标题、内容、发布时间和链接。
-接口只返回最近 20 条，必须每 5-10 分钟运行并写入本地事件缓存，才能拼出最近 24 小时窗口。
+第一版实现 `ThsNewsSource`，直接分页调用同花顺财经直播接口，映射标题、内容、发布时间和链接。
+AkShare `stock_info_global_ths()` 包装函数只请求第一页，但底层接口支持分页。每日任务运行一次即可拉取最近
+24 小时内容，并写入 `data/event_cache/ths/YYYY-MM-DD.json` 原始快照。
 `stock_info_global_futu()` 作为网络失败 fallback；`stock_info_global_cls(symbol="全部")` 缺少稳定的
 原文 URL 字段，只用于交叉确认，不作为唯一事件证据。
 
@@ -581,7 +582,7 @@ abs(pct_chg) >= 5%
 
 ```python
 EVENT_SOURCES = (
-    AkShareThsNewsSource(),
+    ThsNewsSource(),
     CninfoLatestAnnouncementSource(),
     # V2 后续：SinaMarketAnomalySource(),
     # V2 后续：MiitPolicySource(), NdrcPolicySource(),
