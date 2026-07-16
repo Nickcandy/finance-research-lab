@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -319,6 +320,74 @@ def test_daily_radar_workflow_verifies_candidates_with_company_and_market_eviden
     markdown = output.read_text(encoding="utf-8")
     assert "## 2. 已校验 A股候选\n\n- 中际旭创（300308.SZ，A股）" in markdown
     assert "AkShare company and baostock market evidence" in markdown
+
+
+def test_daily_radar_workflow_writes_optional_frontend_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("finance_research_lab.workflow.ThsNewsSource", _one_item_source)
+    impact = StockImpact(
+        "300308.SZ",
+        "中际旭创",
+        "A股",
+        "direct",
+        "low",
+        reasoning="AI 光模块供应链",
+        verification_status="unverified",
+    )
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.trace_news_tool",
+        lambda news, watchlist, universe: ToolResult(
+            "trace_news", "success", _report(news, (impact,))
+        ),
+    )
+    watchlist, universe = _research_inputs(tmp_path)
+    output = tmp_path / "daily-radar.md"
+    snapshot_path = tmp_path / "daily-radar.json"
+
+    run = run_daily_radar_workflow(
+        output,
+        as_of=datetime(2026, 7, 16, 12),
+        watchlist_path=watchlist,
+        a_share_universe_path=universe,
+        json_output_path=snapshot_path,
+    )
+
+    assert run.steps[-1].step_name == "write_snapshot"
+    assert run.steps[-1].status == "success"
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "1.0"
+    assert payload["events"][0]["title"] == "事件"
+    assert payload["candidate_groups"]["unverified"][0]["symbol"] == "300308.SZ"
+    assert payload["run"]["steps"][-1]["step_name"] == "write_report"
+
+
+def test_daily_radar_snapshot_failure_preserves_previous_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("finance_research_lab.workflow.ThsNewsSource", _one_item_source)
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.trace_news_tool",
+        lambda news, watchlist, universe: ToolResult("trace_news", "success", _report(news)),
+    )
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.write_daily_radar_snapshot",
+        lambda payload, path: (_ for _ in ()).throw(OSError("snapshot disk full")),
+    )
+    watchlist, universe = _research_inputs(tmp_path)
+    output = tmp_path / "daily-radar.md"
+    snapshot_path = tmp_path / "daily-radar.json"
+    snapshot_path.write_text("old snapshot", encoding="utf-8")
+
+    run = run_daily_radar_workflow(
+        output,
+        as_of=datetime(2026, 7, 16, 12),
+        watchlist_path=watchlist,
+        a_share_universe_path=universe,
+        json_output_path=snapshot_path,
+    )
+
+    assert output.exists()
+    assert run.steps[-1].step_name == "write_snapshot"
+    assert run.steps[-1].status == "error"
+    assert "snapshot disk full" in run.steps[-1].summary
+    assert snapshot_path.read_text(encoding="utf-8") == "old snapshot"
 
 
 def test_daily_radar_workflow_reports_source_failure_without_overwriting(tmp_path, monkeypatch) -> None:

@@ -52,6 +52,7 @@ def test_daily_radar_cli_has_event_driven_defaults_without_url() -> None:
     assert not hasattr(args, "url")
     assert args.event_cache == "data/event_cache/ths"
     assert args.output == "reports/daily-radar.md"
+    assert args.json_output == "reports/daily-radar.json"
     assert args.watchlist == "data/watchlist.example.csv"
     assert args.a_share_universe == "data/a_share_universe.csv"
     assert args.evidence_cache == "data/akshare_cache"
@@ -78,6 +79,7 @@ def test_daily_radar_cli_forwards_options_and_prints_output(monkeypatch, tmp_pat
     assert captured == {
         "event_cache_path": str(cache),
         "output_path": str(output),
+        "json_output_path": "reports/daily-radar.json",
         "watchlist_path": "data/watchlist.example.csv",
         "a_share_universe_path": "data/a_share_universe.csv",
         "evidence_cache_path": "data/akshare_cache",

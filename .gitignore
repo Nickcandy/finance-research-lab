@@ -22,6 +22,11 @@ venv/
 /reports/*.md
 !/reports/.gitkeep
 
+# Frontend
+/web/node_modules/
+/web/dist/
+/web/coverage/
+
 # OS / editors
 .DS_Store
 .idea/

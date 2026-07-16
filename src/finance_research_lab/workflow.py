@@ -8,6 +8,7 @@ from typing import Any
 from .akshare_evidence import AkShareEvidenceProvider
 from .baostock_market import BaoStockMarketProvider
 from .daily_radar_report import render_daily_event_radar
+from .daily_radar_snapshot import build_daily_radar_snapshot, write_daily_radar_snapshot
 from .event_clustering import cluster_market_events, rank_hot_events
 from .event_sources import SHANGHAI, ThsNewsSource
 from .evidence_tool_agent import run_evidence_tool_calls
@@ -197,6 +198,7 @@ def run_daily_radar_workflow(
     evidence_cache_path: str | Path = "data/akshare_cache",
     market_cache_path: str | Path = "data/baostock_cache",
     refresh_evidence: bool = False,
+    json_output_path: str | Path | None = None,
 ) -> AgentRun:
     """Discover, cluster, rank, and render the latest 24-hour market events."""
 
@@ -325,6 +327,26 @@ def run_daily_radar_workflow(
 
     write_result = write_report_tool(render_result.output, output_path)
     steps.append(_step("write_report", write_result))
+    if write_result.status == "error" or json_output_path is None:
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
+        snapshot = build_daily_radar_snapshot(
+            rank_result.output,
+            reports,
+            steps,
+            window_start,
+            window_end,
+            generated_at=window_end,
+        )
+        snapshot_path = write_daily_radar_snapshot(snapshot, json_output_path)
+    except Exception as exc:
+        snapshot_result = ToolResult("write_daily_radar_snapshot", "error", "", str(exc))
+    else:
+        snapshot_result = ToolResult(
+            "write_daily_radar_snapshot", "success", str(snapshot_path)
+        )
+    steps.append(_step("write_snapshot", snapshot_result))
     return AgentRun("daily_radar", steps, str(output_path))
 
 

@@ -55,12 +55,14 @@ def daily_radar_cmd(args: argparse.Namespace) -> int:
         evidence_cache_path=args.evidence_cache,
         market_cache_path=args.market_cache,
         refresh_evidence=args.refresh_evidence,
+        json_output_path=args.json_output,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
     if not run.steps or run.steps[-1].status == "error":
         return 1
     print(f"wrote {run.output_path}")
+    print(f"wrote {args.json_output}")
     return 0
 
 
@@ -156,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default="reports/daily-radar.md",
         help="Output Markdown path",
+    )
+    daily_radar.add_argument(
+        "--json-output",
+        default="reports/daily-radar.json",
+        help="Output DailyRadarSnapshot JSON path",
     )
     daily_radar.add_argument(
         "--watchlist",
