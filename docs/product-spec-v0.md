@@ -41,12 +41,11 @@
 
 ### 4.1 自动事件发现（目标主入口）
 
-主入口按市场和时间窗口主动发现事件：
+当前主入口固定发现 A 股最近 24 小时事件：
 
 ```bash
-finance-lab discover \
-  --market a-share \
-  --window 24h \
+finance-lab daily-radar \
+  --event-cache data/event_cache/ths \
   --output reports/daily-radar.md
 ```
 
@@ -205,12 +204,15 @@ discover_news_items
 - `AgentStep` 过程记录。
 - AkShare 公告、财报和行情证据 adapter。
 - 最多三轮的受控 Evidence Tool Calling。
+- 同花顺最近 24 小时新闻分页拉取和每日原始快照。
+- `NewsItem` / `MarketEvent` 模型、确定性事件聚类和 Top 5 排序。
+- 无需 URL 的 `daily-radar` workflow、AgentStep 记录和固定 Markdown 日报。
+- Top 5 事件的结构化分析、A 股候选发现，以及公司证据与行情证据双重校验。
+- 相关性门槛：伪相关直接排除，低强度或纯情绪候选不得因基础数据存在而升级为已校验。
 
 尚未实现：
 
-- 主动事件源拉取。
-- `NewsItem` 标准化与同事件聚类。
-- 热点事件排序和每日 Event-driven radar。
+- 巨潮最新公告、全市场行情异动和官方政策事件源。
 - Serenity 式产业链层级与供给卡点排序。
 - 公告正文 / PDF、估值和更稳定的数据 provider。
 - 持久化 agent_runs / agent_steps / reviews。
@@ -218,7 +220,7 @@ discover_news_items
 
 ## 9. 下一步最小任务
 
-下一步不再扩展多 URL 手工输入，而是做自动事件发现最小闭环：
+自动事件发现、候选研究与证据核验闭环已经完成。下一步扩展多源发现和 Serenity 深度研究：
 
 ```text
 拉取最近 24 小时的可信内容

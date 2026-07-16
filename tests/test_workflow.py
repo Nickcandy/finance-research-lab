@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from finance_research_lab.models import (
     AShareCompany,
     FinancialSnapshot,
@@ -210,7 +212,7 @@ def test_research_agent_keeps_report_when_market_evidence_fails(tmp_path, monkey
     assert "akshare: provider timeout" in markdown
 
 
-def test_tool_verification_requires_company_and_market_evidence() -> None:
+def test_tool_verification_requires_relevance_company_and_market_evidence() -> None:
     report = _candidate_report()
     market = MarketSnapshot("300308.SZ", "2026-07-10", 100, 101, 99, 100, 0, 100, 1000, 5)
 
@@ -247,6 +249,31 @@ def test_tool_verification_preserves_excluded_candidates() -> None:
     assert verified.stock_impacts[0].verification_status == "excluded"
 
 
+@pytest.mark.parametrize(
+    ("impact_type", "impact_strength", "expected"),
+    [
+        ("direct", "medium", "verified"),
+        ("negative", "high", "verified"),
+        ("indirect", "low", "unverified"),
+        ("sentiment", "high", "unverified"),
+        ("direct", "unknown", "unverified"),
+        ("false_positive", "low", "excluded"),
+    ],
+)
+def test_tool_verification_applies_event_relevance_gate(
+    impact_type,
+    impact_strength,
+    expected,
+) -> None:
+    report = _candidate_report(impact_type=impact_type, impact_strength=impact_strength)
+    financial = FinancialSnapshot("300308.SZ", "2026-03-31", revenue=100)
+    market = MarketSnapshot("300308.SZ", "2026-07-10", 100, 101, 99, 100, 0, 100, 1000, 5)
+
+    verified = _apply_tool_verification(report, (), (financial,), (market,))
+
+    assert verified.stock_impacts[0].verification_status == expected
+
+
 def test_missing_model_calls_are_completed_with_company_and_market_evidence() -> None:
     steps = []
 
@@ -263,6 +290,33 @@ def test_missing_model_calls_are_completed_with_company_and_market_evidence() ->
     assert financials[0].symbol == "300308.SZ"
     assert markets[0].symbol == "300308.SZ"
     assert warnings == []
+    assert [step.step_name for step in steps] == [
+        "fetch_financial_reports:300308.SZ",
+        "fetch_market_snapshot:300308.SZ",
+    ]
+
+
+def test_completed_candidate_evidence_is_reused_within_a_run() -> None:
+    steps = []
+    attempted = {}
+
+    first, first_warnings = _complete_candidate_evidence(
+        _research_tool_registry(_Provider()),
+        ("300308.SZ",),
+        (),
+        attempted,
+        steps,
+    )
+    second, second_warnings = _complete_candidate_evidence(
+        _research_tool_registry(_Provider()),
+        ("300308.SZ",),
+        first,
+        attempted,
+        steps,
+    )
+
+    assert second == first
+    assert first_warnings == second_warnings == []
     assert [step.step_name for step in steps] == [
         "fetch_financial_reports:300308.SZ",
         "fetch_market_snapshot:300308.SZ",
@@ -303,7 +357,11 @@ def _successful_fetch(url: str):
     )
 
 
-def _candidate_report(verification_status="verified"):
+def _candidate_report(
+    verification_status="verified",
+    impact_type="direct",
+    impact_strength="medium",
+):
     news = NewsItem("AI capex", "test", body="AI optical module demand")
     report = build_research_report(
         news,
@@ -314,12 +372,18 @@ def _candidate_report(verification_status="verified"):
                 "300308.SZ",
                 "中际旭创",
                 "A股",
-                "direct",
+                impact_type,
+                impact_strength,
                 verification_status=verification_status,
             ),
         ),
     )
-    impact = replace(report.stock_impacts[0], verification_status=verification_status)
+    impact = replace(
+        report.stock_impacts[0],
+        impact_type=impact_type,
+        impact_strength=impact_strength,
+        verification_status=verification_status,
+    )
     return replace(report, stock_impacts=(impact,))
 
 

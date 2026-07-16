@@ -38,6 +38,20 @@
 
 ## 当前已实现路径
 
+主动事件发现主入口：
+
+```text
+同花顺最近 24 小时新闻
+→ NewsItem
+→ MarketEvent 聚类
+→ Top 5 热点排序
+→ LLM / 规则事件分析与 A 股候选发现
+→ AkShare 公司证据 + BaoStock / AkShare 行情校验
+→ reports/daily-radar.md
+```
+
+URL 手动深挖辅助入口：
+
 ```text
 输入：
 - data/watchlist.example.csv：个人关注股票上下文
@@ -54,7 +68,9 @@
 - reports/*.md
 ```
 
-当前实现已经包含 `trace-news`、`radar` 和 `research-agent` 三个 URL 驱动的 CLI 入口，以及 A 股 universe、BaoStock 日线行情主源、AkShare 公告 / 财报与行情 fallback、受控 Tool Calling。V2 已加入事件模型和每日分页拉取最近 24 小时同花顺新闻的 `ThsNewsSource`；下一步实现事件聚类、热点排序和主动发现入口。现有 URL 命令继续作为手动深挖和下游调试工具。
+当前实现已经包含无 URL 的 `daily-radar` 主入口，以及 `trace-news`、`radar` 和 `research-agent`
+三个 URL 手动研究入口。V2 已串通同花顺最近 24 小时新闻、事件聚类、Top 5 排序、逐事件产业链
+分析、A 股候选发现和证据校验，并输出固定 Markdown 日报；更多事件源和完整 Serenity 分析仍在后续阶段。
 
 ## 项目结构
 
@@ -68,6 +84,9 @@ finance-research-lab/
     agent_models.py             # Agent run / step / tool result 数据结构
     tools.py                    # Agent 可调用工具封装
     workflow.py                 # 代码控制的 Agent v0 工作流
+    event_sources.py            # 主动事件源
+    event_clustering.py         # 确定性事件聚类与热点排序
+    daily_radar_report.py       # Event-driven 日报生成
     news_fetcher.py             # 静态 HTML 新闻抓取和正文提取
     news_trace.py               # 热点新闻追源逻辑
     report.py                   # Markdown 报告生成
@@ -116,6 +135,14 @@ LLM_TIMEOUT_SECONDS=90
 Structured Outputs 只能约束返回结构，不能保证投资结论正确；报告仍然只用于研究辅助，需要人工复核证据和风险。
 
 ## 命令示例
+
+生成最近 24 小时的 Event-driven 日报：
+
+```bash
+finance-lab daily-radar \
+  --event-cache data/event_cache/ths \
+  --output reports/daily-radar.md
+```
 
 生成一份示例热点追源报告：
 
@@ -249,8 +276,8 @@ V0 URL 新闻追源（辅助入口）
 - [x] `NewsItem` / `MarketEvent` / `Theme` 模型
 - [x] 同花顺财经直播分页源和最近 24 小时原始快照
 - [ ] 巨潮最新公告、全市场行情异动和官方政策 source adapters
-- [ ] 事件去重、聚类和热点排序
-- [ ] Event-driven `daily-radar.md`
+- [x] 事件去重、聚类和热点排序
+- [x] Event-driven `daily-radar.md`
 - [ ] Serenity 产业链层级与供给卡点分析
 
 ### Phase 3：稳定数据源与回测验证

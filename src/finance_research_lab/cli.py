@@ -8,7 +8,12 @@ from .akshare_evidence import AkShareEvidenceProvider
 from .a_share_universe import sync_a_share_universe_from_akshare
 from .baostock_market import BaoStockMarketProvider
 from .market_evidence import FallbackMarketProvider
-from .workflow import run_news_trace_workflow, run_radar_workflow, run_research_agent_workflow
+from .workflow import (
+    run_daily_radar_workflow,
+    run_news_trace_workflow,
+    run_radar_workflow,
+    run_research_agent_workflow,
+)
 
 
 def trace_news(args: argparse.Namespace) -> int:
@@ -32,6 +37,24 @@ def radar_cmd(args: argparse.Namespace) -> int:
         watchlist_path=args.watchlist,
         output_path=args.output,
         a_share_universe_path=args.a_share_universe,
+    )
+    for step in run.steps:
+        print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
+    if not run.steps or run.steps[-1].status == "error":
+        return 1
+    print(f"wrote {run.output_path}")
+    return 0
+
+
+def daily_radar_cmd(args: argparse.Namespace) -> int:
+    run = run_daily_radar_workflow(
+        output_path=args.output,
+        event_cache_path=args.event_cache,
+        watchlist_path=args.watchlist,
+        a_share_universe_path=args.a_share_universe,
+        evidence_cache_path=args.evidence_cache,
+        market_cache_path=args.market_cache,
+        refresh_evidence=args.refresh_evidence,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
@@ -119,6 +142,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     radar.add_argument("--output", default="reports/opportunity-radar.md", help="Output Markdown path")
     radar.set_defaults(func=radar_cmd)
+
+    daily_radar = subparsers.add_parser(
+        "daily-radar",
+        help="Discover and render the latest 24-hour market events",
+    )
+    daily_radar.add_argument(
+        "--event-cache",
+        default="data/event_cache/ths",
+        help="THS event snapshot cache path",
+    )
+    daily_radar.add_argument(
+        "--output",
+        default="reports/daily-radar.md",
+        help="Output Markdown path",
+    )
+    daily_radar.add_argument(
+        "--watchlist",
+        default="data/watchlist.example.csv",
+        help="CSV watchlist context path",
+    )
+    daily_radar.add_argument(
+        "--a-share-universe",
+        default="data/a_share_universe.csv",
+        help="CSV A-share universe path",
+    )
+    daily_radar.add_argument(
+        "--evidence-cache",
+        default="data/akshare_cache",
+        help="AkShare evidence cache path",
+    )
+    daily_radar.add_argument(
+        "--market-cache",
+        default="data/baostock_cache",
+        help="BaoStock market cache path",
+    )
+    daily_radar.add_argument(
+        "--refresh-evidence",
+        action="store_true",
+        help="Refresh all candidate evidence caches",
+    )
+    daily_radar.set_defaults(func=daily_radar_cmd)
 
     agent = subparsers.add_parser("research-agent", help="Generate a task/evidence Agent report")
     agent.add_argument("--url", required=True, help="Static HTML news article URL")

@@ -44,6 +44,66 @@ def test_radar_cli_accepts_multiple_urls_with_defaults() -> None:
     assert args.output == "reports/opportunity-radar.md"
 
 
+def test_daily_radar_cli_has_event_driven_defaults_without_url() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["daily-radar"])
+
+    assert not hasattr(args, "url")
+    assert args.event_cache == "data/event_cache/ths"
+    assert args.output == "reports/daily-radar.md"
+    assert args.watchlist == "data/watchlist.example.csv"
+    assert args.a_share_universe == "data/a_share_universe.csv"
+    assert args.evidence_cache == "data/akshare_cache"
+    assert args.market_cache == "data/baostock_cache"
+    assert not args.refresh_evidence
+
+
+def test_daily_radar_cli_forwards_options_and_prints_output(monkeypatch, tmp_path, capsys) -> None:
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return _successful_run("daily_radar", kwargs["output_path"])
+
+    monkeypatch.setattr(cli, "run_daily_radar_workflow", fake_run)
+    output = tmp_path / "daily.md"
+    cache = tmp_path / "cache"
+
+    exit_code = cli.main(
+        ["daily-radar", "--event-cache", str(cache), "--output", str(output)]
+    )
+
+    assert exit_code == 0
+    assert captured == {
+        "event_cache_path": str(cache),
+        "output_path": str(output),
+        "watchlist_path": "data/watchlist.example.csv",
+        "a_share_universe_path": "data/a_share_universe.csv",
+        "evidence_cache_path": "data/akshare_cache",
+        "market_cache_path": "data/baostock_cache",
+        "refresh_evidence": False,
+    }
+    assert f"wrote {output}" in capsys.readouterr().out
+
+
+def test_daily_radar_cli_returns_error_for_failed_run(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "run_daily_radar_workflow",
+        lambda **kwargs: AgentRun(
+            "daily_radar",
+            [AgentStep("fetch_event_source", "ths_global_news", "error", "network down")],
+            kwargs["output_path"],
+        ),
+    )
+
+    assert cli.main(["daily-radar"]) == 1
+    output = capsys.readouterr().out
+    assert "network down" in output
+    assert "wrote" not in output
+
+
 def test_research_agent_cli_requires_url() -> None:
     parser = build_parser()
 

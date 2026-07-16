@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import replace
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .akshare_evidence import AkShareEvidenceProvider
 from .baostock_market import BaoStockMarketProvider
+from .daily_radar_report import render_daily_event_radar
+from .event_clustering import cluster_market_events, rank_hot_events
+from .event_sources import SHANGHAI, ThsNewsSource
 from .evidence_tool_agent import run_evidence_tool_calls
 from .llm.chat_completions_client import ChatCompletionsClient
 from .market_evidence import FallbackMarketProvider, MarketEvidenceProvider
@@ -46,10 +50,12 @@ from .tools import (
 )
 
 DEFAULT_A_SHARE_UNIVERSE_PATH = "data/a_share_universe.example.csv"
+MAX_DAILY_CANDIDATES_PER_EVENT = 3
+MAX_EVENT_RESEARCH_BODY_CHARS = 12_000
 
 
 def _summarize_output(output: Any) -> str:
-    if isinstance(output, list):
+    if isinstance(output, (list, tuple)):
         return f"{len(output)} item(s)"
     if output is None:
         return "none"
@@ -179,6 +185,175 @@ def run_radar_workflow(
     steps.append(_step("write_report", write_result))
 
     return AgentRun("radar", steps, str(output_path))
+
+
+def run_daily_radar_workflow(
+    output_path: str | Path,
+    event_cache_path: str | Path = "data/event_cache/ths",
+    as_of: datetime | None = None,
+    *,
+    watchlist_path: str | Path = "data/watchlist.example.csv",
+    a_share_universe_path: str | Path = "data/a_share_universe.csv",
+    evidence_cache_path: str | Path = "data/akshare_cache",
+    market_cache_path: str | Path = "data/baostock_cache",
+    refresh_evidence: bool = False,
+) -> AgentRun:
+    """Discover, cluster, rank, and render the latest 24-hour market events."""
+
+    steps: list[AgentStep] = []
+    window_end = _shanghai_time(as_of or datetime.now(SHANGHAI))
+    window_start = window_end - timedelta(hours=24)
+
+    try:
+        items = ThsNewsSource(event_cache_path).fetch(window_start, window_end)
+    except Exception as exc:
+        fetch_result = ToolResult("ths_global_news", "error", (), str(exc))
+    else:
+        fetch_result = ToolResult("ths_global_news", "success", items)
+    steps.append(_step("fetch_event_source", fetch_result))
+    if fetch_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
+        events = cluster_market_events(fetch_result.output)
+    except Exception as exc:
+        cluster_result = ToolResult("cluster_market_events", "error", (), str(exc))
+    else:
+        cluster_result = ToolResult("cluster_market_events", "success", events)
+    steps.append(_step("cluster_market_events", cluster_result))
+    if cluster_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
+        ranked_events = rank_hot_events(cluster_result.output)
+    except Exception as exc:
+        rank_result = ToolResult("rank_hot_events", "error", (), str(exc))
+    else:
+        if ranked_events:
+            rank_result = ToolResult("rank_hot_events", "success", ranked_events)
+        else:
+            rank_result = ToolResult(
+                "rank_hot_events", "error", (), "no market events found"
+            )
+    steps.append(_step("rank_hot_events", rank_result))
+    if rank_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    watchlist_result = read_watchlist_tool(watchlist_path)
+    steps.append(_step("read_watchlist", watchlist_result))
+    if watchlist_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    universe_result = read_a_share_universe_tool(a_share_universe_path)
+    steps.append(_step("read_a_share_universe", universe_result))
+    if universe_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    company_provider = AkShareEvidenceProvider(evidence_cache_path, refresh=refresh_evidence)
+    market_provider = FallbackMarketProvider(
+        BaoStockMarketProvider(market_cache_path, refresh=refresh_evidence),
+        company_provider,
+    )
+    registry = _research_tool_registry(company_provider, market_provider)
+    reports: list[ResearchReport | None] = []
+    daily_tool_results: tuple[ToolResult, ...] = ()
+    daily_attempted_tools: dict[str, frozenset[str]] = {}
+    for index, event in enumerate(rank_result.output, start=1):
+        news = _market_event_news(event)
+        trace_result = trace_news_tool(
+            news,
+            watchlist_result.output,
+            universe_result.output,
+        )
+        steps.append(_step(f"analyze_event:{index}", trace_result))
+        if trace_result.status == "error":
+            reports.append(None)
+            continue
+
+        candidate_symbols = tuple(
+            dict.fromkeys(
+                impact.symbol
+                for impact in trace_result.output.stock_impacts
+                if (
+                    impact.market == "A股"
+                    and impact.verification_status != "excluded"
+                    and impact.impact_type in {"direct", "indirect", "negative"}
+                    and impact.impact_strength in {"medium", "high"}
+                )
+            )
+        )[:MAX_DAILY_CANDIDATES_PER_EVENT]
+        daily_tool_results, evidence_warnings = _complete_candidate_evidence(
+            registry,
+            candidate_symbols,
+            daily_tool_results,
+            daily_attempted_tools,
+            steps,
+        )
+        announcements, financials, markets = _evidence_outputs(daily_tool_results)
+        report = _apply_tool_verification(
+            trace_result.output,
+            announcements,
+            financials,
+            markets,
+        )
+        verify_result = ToolResult(
+            "verify_event_candidates",
+            "success",
+            report,
+            "；".join(evidence_warnings),
+        )
+        steps.append(_step(f"verify_event_candidates:{index}", verify_result))
+        reports.append(report)
+
+    if not any(report is not None for report in reports):
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
+        markdown = render_daily_event_radar(
+            rank_result.output,
+            window_start,
+            window_end,
+            tuple(reports),
+        )
+    except Exception as exc:
+        render_result = ToolResult("render_daily_event_radar", "error", "", str(exc))
+    else:
+        render_result = ToolResult("render_daily_event_radar", "success", markdown)
+    steps.append(_step("render_daily_radar", render_result))
+    if render_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    write_result = write_report_tool(render_result.output, output_path)
+    steps.append(_step("write_report", write_result))
+    return AgentRun("daily_radar", steps, str(output_path))
+
+
+def _shanghai_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=SHANGHAI)
+    return value.astimezone(SHANGHAI)
+
+
+def _market_event_news(event) -> NewsItem:
+    sources = tuple(dict.fromkeys(item.source for item in event.items if item.source))
+    body_parts = []
+    for item in event.items:
+        body_parts.append(
+            f"来源：{item.source or '未提供'}\n标题：{item.headline}\n"
+            f"URL：{item.url or '未提供'}\n正文：{item.body or '未提供'}"
+        )
+    body = "\n\n".join(body_parts)
+    if len(body) > MAX_EVENT_RESEARCH_BODY_CHARS:
+        body = f"{body[: MAX_EVENT_RESEARCH_BODY_CHARS - 3]}..."
+    latest = event.items[0]
+    return NewsItem(
+        headline=event.title,
+        source=" / ".join(sources) or "未提供",
+        url=event.source_urls[0] if event.source_urls else "",
+        published_at=latest.published_at,
+        body=body,
+        source_type=latest.source_type,
+    )
 
 
 def run_research_agent_workflow(
@@ -371,9 +546,17 @@ def _apply_tool_verification(
     market_by_symbol = {item.symbol: item for item in markets}
     impacts = []
     for impact in report.stock_impacts:
-        if impact.verification_status == "excluded":
-            impacts.append(impact)
-        elif impact.symbol in company_symbols and impact.symbol in market_by_symbol:
+        if impact.verification_status == "excluded" or impact.impact_type == "false_positive":
+            impacts.append(
+                replace(impact, verification_status="excluded", verification_source="")
+            )
+        elif (
+            impact.market == "A股"
+            and impact.impact_type in {"direct", "indirect", "negative"}
+            and impact.impact_strength in {"medium", "high"}
+            and impact.symbol in company_symbols
+            and impact.symbol in market_by_symbol
+        ):
             market = market_by_symbol[impact.symbol]
             market_source = f"{market.provider} market" if market.provider else "market"
             impacts.append(
@@ -432,6 +615,8 @@ def _complete_candidate_evidence(
         if "fetch_market_snapshot" not in coverage:
             warnings.append(f"{symbol} 缺少有效行情证据。")
 
+    attempted_tools.clear()
+    attempted_tools.update({symbol: frozenset(names) for symbol, names in attempts.items()})
     return tuple(results), warnings
 
 

@@ -521,10 +521,11 @@ V1.5 已接入 BaoStock 行情主源和 AkShare 公告 / 财报及行情 fallbac
 财报和行情工具中选择，代码校验参数、执行查询并回传结果后，再生成最终结构化报告。公告、财报
 和行情查询缓存到本地。BaoStock 行情缓存位于 `data/baostock_cache/`，AkShare 缓存位于
 `data/akshare_cache/`；行情缓存 TTL 为 24 小时，传入 `--refresh-evidence` 可同时强制刷新。
-workflow 会补齐模型未调用的最低证据项；只有同时具备非空公司证据和有效行情证据的候选才标记为
-`verified`，空结果或部分失败会保留为 `unverified` 并写入待补充说明。
+workflow 会补齐模型未调用的最低证据项；只有事件相关性至少为中等、同时具备非空公司证据和有效
+行情证据的 A 股候选才标记为 `verified`。伪相关直接排除，低强度、纯情绪、空结果或部分失败候选
+保留为 `unverified` 并写入待补充说明。
 
-下一阶段不再扩展手工多 URL 输入，而是实现 V2 自动事件发现。
+V2 自动事件发现、逐事件候选研究和证据核验闭环已经完成；下一阶段接入更多事件源并深化 Serenity 分析。
 
 验收标准：
 
@@ -545,9 +546,50 @@ pytest 通过
 ```text
 Task 1：定义 NewsItem / MarketEvent / Theme
 Task 2：接入 `ThsNewsSource`，每日分页拉取最近 24 小时内容并保存原始快照
-Task 3：实现事件去重、聚类和热点排序
-Task 4：输出 Event-driven daily-radar.md
+Task 3：实现事件去重、聚类和热点排序（已完成）
+Task 4：输出 Event-driven daily-radar.md（已完成）
 Task 5：接入巨潮最新公告列表和全市场行情异动源
 Task 6：接入政策源并加入 Serenity 产业链层级与供给卡点分析
 Task 7：补公告正文 / PDF 和更稳定的数据 provider
 ```
+
+### Task 3（已完成）
+
+已实现确定性的事件去重、聚类和热点排序，可以把 `ThsNewsSource` 产出的 `NewsItem` 转换为稳定、
+可解释的 Top 5 `MarketEvent`。本次没有接入新的数据源、LLM 或最终日报。
+
+实现结果：
+
+1. 新增 `event_clustering.py`，提供 `cluster_market_events()` 和 `rank_hot_events()`。
+2. 聚类使用确定性的文本标准化、时间窗口、行情数值签名和字符 bigram 相似度，不依赖外部 NLP。
+3. 热点排序优先独立来源数量，再按发布时间排序；同一来源的连续播报不重复增加热度。
+4. 测试覆盖重复新闻、相似但不同事件、空 URL、多来源 URL、输入顺序和非法输入。
+5. 已使用最近 24 小时 `ThsNewsSource` 数据做只读 smoke；CLI 与现有 URL workflow 保持不变。
+
+验收标准：
+
+- 相同事件的重复内容只生成一个 `MarketEvent`。
+- 相似主题下的不同事件不会仅因共享行业词而合并。
+- `MarketEvent.source_urls` 保留全部非空 URL，且顺序稳定、没有重复。
+- 相同输入无论排列顺序如何，都得到相同的事件分组和 Top 5 顺序。
+- 聚类和排序结果不依赖 LLM 或外部 NLP 服务。
+
+### Task 4（已完成）
+
+已实现无需 URL 的 `finance-lab daily-radar`，固定拉取最近 24 小时同花顺新闻，完成事件聚类、
+Top 5 排序、逐事件分析、A 股候选发现和证据核验，并输出 `reports/daily-radar.md`。
+
+实现结果：
+
+1. 新增 `run_daily_radar_workflow()`，按代码控制事件发现、研究、校验、渲染和写入，并记录全部 `AgentStep`。
+2. 新增固定日报 renderer，输出核心事件、产业链、已校验/待确认/排除候选、watchlist 和验证任务。
+3. 候选只覆盖 A 股；watchlist 只提供上下文，伪相关、低强度和纯情绪映射不能进入已校验候选。
+4. 公司与行情证据按股票在单次运行内复用；失败或没有事件时不创建、删除或覆盖报告。
+5. 新增 `daily-radar` CLI，固定 A 股最近 24 小时，不增加 scheduler。
+
+### TODO（本轮不做）
+
+- LLM 语义聚类；当前聚类继续使用可复现的确定性规则。
+- 巨潮最新公告、全市场行情异动等 source adapters；放在 Task 5。
+- 官方政策源和 Serenity 产业链层级 / 供给卡点分析；放在 Task 6。
+- 公告正文 / PDF 解析和更稳定的数据 provider；放在 Task 7。
