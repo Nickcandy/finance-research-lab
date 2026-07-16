@@ -8,6 +8,7 @@ from .akshare_evidence import AkShareEvidenceProvider
 from .a_share_universe import sync_a_share_universe_from_akshare
 from .baostock_market import BaoStockMarketProvider
 from .market_evidence import FallbackMarketProvider
+from .web_api import serve
 from .workflow import (
     run_daily_radar_workflow,
     run_news_trace_workflow,
@@ -81,6 +82,11 @@ def research_agent_cmd(args: argparse.Namespace) -> int:
     if not run.steps or run.steps[-1].status == "error":
         return 1
     print(f"wrote {run.output_path}")
+    return 0
+
+
+def serve_cmd(args: argparse.Namespace) -> int:
+    serve(args.host, args.port, args.snapshot)
     return 0
 
 
@@ -190,6 +196,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Refresh all candidate evidence caches",
     )
     daily_radar.set_defaults(func=daily_radar_cmd)
+
+    web = subparsers.add_parser("serve", help="Serve the latest daily radar snapshot")
+    web.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
+    web.add_argument("--port", type=int, default=8000, help="HTTP bind port")
+    web.add_argument(
+        "--snapshot",
+        default="reports/daily-radar.json",
+        help="DailyRadarSnapshot JSON path",
+    )
+    web.set_defaults(func=serve_cmd)
 
     agent = subparsers.add_parser("research-agent", help="Generate a task/evidence Agent report")
     agent.add_argument("--url", required=True, help="Static HTML news article URL")

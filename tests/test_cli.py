@@ -106,6 +106,32 @@ def test_daily_radar_cli_returns_error_for_failed_run(monkeypatch, capsys) -> No
     assert "wrote" not in output
 
 
+def test_serve_cli_has_local_read_only_defaults() -> None:
+    args = build_parser().parse_args(["serve"])
+
+    assert args.host == "127.0.0.1"
+    assert args.port == 8000
+    assert args.snapshot == "reports/daily-radar.json"
+
+
+def test_serve_cli_forwards_custom_server_options(monkeypatch) -> None:
+    captured = {}
+
+    def fake_serve(host, port, snapshot_path):
+        captured.update(host=host, port=port, snapshot_path=snapshot_path)
+
+    monkeypatch.setattr(cli, "serve", fake_serve)
+
+    assert cli.main(
+        ["serve", "--host", "127.0.0.2", "--port", "8123", "--snapshot", "tmp/radar.json"]
+    ) == 0
+    assert captured == {
+        "host": "127.0.0.2",
+        "port": 8123,
+        "snapshot_path": "tmp/radar.json",
+    }
+
+
 def test_research_agent_cli_requires_url() -> None:
     parser = build_parser()
 

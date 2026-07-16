@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [{name = "Nickcandy"}]
-dependencies = []
+dependencies = [
+  "tzdata; platform_system == 'Windows'",
+]
 
 [project.optional-dependencies]
 akshare = [

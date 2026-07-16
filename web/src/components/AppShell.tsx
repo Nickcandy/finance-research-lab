@@ -14,7 +14,7 @@ export function AppShell({ children }: AppShellProps) {
           <div className="grid size-9 place-items-center rounded-lg bg-brand text-sm font-bold">F</div>
           <div>
             <p className="text-sm font-semibold">Finance Lab</p>
-            <p className="text-[11px] text-sidebar-muted">今日雷达 · 前端预览</p>
+            <p className="text-[11px] text-sidebar-muted">今日雷达 · 本地快照</p>
           </div>
         </div>
       </div>

@@ -7,13 +7,12 @@ import { RadarHeader } from "../components/RadarHeader";
 import { RunAudit } from "../components/RunAudit";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { ValidationTasks } from "../components/ValidationTasks";
-import { getPreviewState, loadRadarPreview } from "../data/loadRadarPreview";
+import { loadLatestRadar } from "../data/loadLatestRadar";
 
 export function TodayPage() {
-  const previewState = getPreviewState();
   const query = useQuery({
-    queryKey: ["daily-radar-preview", previewState],
-    queryFn: () => loadRadarPreview(previewState),
+    queryKey: ["daily-radar-latest"],
+    queryFn: loadLatestRadar,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
@@ -24,7 +23,7 @@ export function TodayPage() {
   }
 
   const radar = query.data;
-  if (radar.events.length === 0) return <EmptyState />;
+  if (radar === null || radar.events.length === 0) return <EmptyState />;
 
   return (
     <div className="mx-auto min-w-0 max-w-[1380px] overflow-x-hidden px-4 py-7 sm:px-7 lg:px-9 lg:py-10">

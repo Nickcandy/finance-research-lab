@@ -36,7 +36,7 @@ export function Sidebar() {
           </div>
           <div className="mt-3 flex items-center gap-2 text-sm font-medium">
             <span className="size-2 rounded-full bg-[#9CC6B8]" />
-            前端预览数据
+            最新成功快照
           </div>
           <p className="mt-2 text-xs leading-5 text-sidebar-muted">同花顺 · AkShare · BaoStock</p>
         </div>

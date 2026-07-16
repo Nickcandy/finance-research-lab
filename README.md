@@ -77,8 +77,8 @@ URL 手动深挖辅助入口：
 ```text
 finance-research-lab/
   data/                         # 示例 watchlist / 后续本地数据缓存
-  reports/                      # 生成的 Markdown 报告
-  web/                          # React 今日雷达前端预览
+  reports/                      # 生成的 Markdown 报告和 JSON 快照
+  web/                          # React 今日雷达前端
   src/finance_research_lab/
     cli.py                      # 命令行入口
     models.py                   # 核心数据结构和 Agent-ready ResearchReport schema
@@ -137,31 +137,39 @@ Structured Outputs 只能约束返回结构，不能保证投资结论正确；�
 
 ## 命令示例
 
-启动本地前端预览：
+生成真实日报和前端 JSON 快照：
+
+```bash
+finance-lab daily-radar \
+  --output reports/daily-radar.md \
+  --json-output reports/daily-radar.json
+```
+
+启动只读本地 API：
+
+```bash
+finance-lab serve --host 127.0.0.1 --port 8000
+```
+
+另开一个终端启动前端：
 
 ```bash
 cd web
-pnpm install
-pnpm dev
+corepack pnpm install
+corepack pnpm dev
 ```
 
-访问 `http://127.0.0.1:5173/today`。当前页面使用带明确标识的本地 fixture，已经包含 Top 5
-事件、候选分组、风险、来源和验证任务；真实 `DailyRadarSnapshot` API 将在下一阶段接入。
-
-可通过查询参数检查页面状态：
-
-```text
-/today?state=loading
-/today?state=empty
-/today?state=error
-```
+访问 `http://127.0.0.1:5173/today`。Vite 会把 `/api` 转发到本地 Python 服务；页面读取
+`reports/daily-radar.json`，刷新按钮只重新读取最新成功快照，不会触发研究 workflow。可通过
+`http://127.0.0.1:8000/api/health` 检查 API 和快照是否可用。
 
 生成最近 24 小时的 Event-driven 日报：
 
 ```bash
 finance-lab daily-radar \
   --event-cache data/event_cache/ths \
-  --output reports/daily-radar.md
+  --output reports/daily-radar.md \
+  --json-output reports/daily-radar.json
 ```
 
 生成一份示例热点追源报告：

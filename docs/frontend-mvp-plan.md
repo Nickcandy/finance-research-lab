@@ -1,6 +1,6 @@
 # 前端 MVP 分析与实施计划
 
-> 状态：前端预览版已完成，真实 API 待接入
+> 状态：MVP-A 已完成，真实日报已通过只读本地 API 接入
 > 日期：2026-07-16
 > 范围：本地单用户 Web MVP，不包含 Task 5 多事件源和 Task 6 Serenity 深度分析
 
@@ -18,8 +18,7 @@ Markdown。下一步应优先补前端产品层，而不是继续扩展更多分
 1. **MVP-A：真实日报可视化**。增加稳定 JSON snapshot 和只读本地 API，完成好看的“今日雷达”。
 2. **MVP-B：本地可操作工作台**。增加一键运行、真实进度、事件详情和运行记录。
 
-使用真实 fixture 的首个页面预计 2–3 个专注开发日即可看到；接通真实 API 并完成 MVP-A 预计
-5–6 个专注开发日。MVP-B 完成后，整个本地前端 MVP 预计共需 8–10 个专注开发日。
+MVP-A 已完成。MVP-B 仍预计需要 3–4 个专注开发日，完成后将具备后台运行、事件详情和运行记录。
 
 ## 2. 当前状态审计
 
@@ -37,39 +36,21 @@ Markdown。下一步应优先补前端产品层，而不是继续扩展更多分
 
 因此，前端不需要重新实现研究逻辑；它应该把现有研究结果重新组织成更容易扫描和下钻的产品界面。
 
-### 2.2 阻塞前端的缺口
+### 2.2 MVP-B 剩余缺口
 
-当前仓库没有 `package.json`、Web 前端、HTTP API 或运行历史。
+仓库现在已有稳定的 `DailyRadarSnapshot v1`、只读本地 API 和 React `/today`。当前 workflow 仍是
+同步执行，CLI 也在整个 workflow 结束后才统一打印步骤，因此页面只读取最新成功快照，不提供伪造的
+运行进度。
 
-更关键的是，`run_daily_radar_workflow()` 结束时只返回 `AgentRun`，而 `AgentRun` 只包含：
-
-```text
-run_name
-steps
-output_path
-```
-
-Top 5 `MarketEvent`、逐事件 `ResearchReport`、候选证据和 warning 只在 workflow 内部存在，最终只被
-渲染进 Markdown。React 不能把 Markdown 当成稳定数据合同，否则后续文案或排版调整会破坏页面。
-
-另外，当前 workflow 是同步执行，CLI 也在整个 workflow 结束后才统一打印步骤。真实运行需要数分钟，
-因此在增加逐步回调或持久化之前，前端不能伪造“正在分析第 N/5 个事件”的进度。
-
-当前合同还有三个具体缺口需要在 snapshot 层补齐：
-
-- `MarketEvent.source_urls` 是 property，普通 dataclass 序列化不会包含它。
-- `ResearchReport` JSON schema 没有保存 `NewsItem.source_type`。
-- `AgentStep` 没有开始/结束时间和独立 error 字段，summary 还会截断为 160 个字符。
-
-MVP-A 先显式输出来源、候选和现有 step 摘要；MVP-B 再增加 step 时间与完整错误，用于真实进度和
-运行审计。
+MVP-B 仍需增加逐步回调、运行持久化和后台执行；届时再补 `AgentStep` 的开始/结束时间与独立错误，
+用于真实进度和完整运行审计。
 
 ### 2.3 本地工具链
 
 当前机器已经具备：
 
 ```text
-Node.js 22.22.3
+Node.js 24.11.1
 npm 10.9.8
 pnpm 10.24.0
 Python 3.9.6
@@ -423,52 +404,26 @@ MVP-B 事件详情按研究过程组织：
 
 ## 9. 本地运行方式
 
-当前已完成无需 API 的前端预览版：
+MVP-A 使用两个本地进程。先生成日报并启动只读 API：
 
 ```bash
-cd web
-pnpm install
-pnpm dev
-```
-
-浏览器访问：
-
-```text
-http://127.0.0.1:5173/today
-```
-
-预览数据来自 `web/src/fixtures/daily-radar.json`，页面会明确显示“前端预览”，不会把 fixture
-冒充实时研究结果。四种页面状态可以直接验收：
-
-```text
-/today                 Success
-/today?state=loading   Loading
-/today?state=empty     Empty
-/today?state=error     Error
-```
-
-下一阶段接入真实 API 后的目标命令：
-
-MVP-A 完成后的目标命令：
-
-```bash
-# Terminal 1：生成真实日报和 JSON snapshot
 .venv/bin/finance-lab daily-radar \
   --output reports/daily-radar.md \
   --json-output reports/daily-radar.json
 
-# Terminal 1：启动只读本地 API
 .venv/bin/finance-lab serve --host 127.0.0.1 --port 8000
 ```
 
+另开终端启动前端：
+
 ```bash
-# Terminal 2：启动前端
 cd web
-pnpm install
-pnpm dev
+corepack pnpm install
+corepack pnpm dev
 ```
 
-`--json-output` 当前已有草稿实现；`serve` 尚不存在，前端预览也还没有读取这份 JSON。
+浏览器访问 `http://127.0.0.1:5173/today`。页面通过 Vite `/api` 代理读取真实快照；日报不存在时显示
+Empty，快照损坏或 API 不可用时显示 Error。
 
 MVP-B 完成后，可以直接在网页点击“生成今日雷达”；终端命令仍保留，便于调试和自动任务使用。
 
@@ -495,7 +450,7 @@ MVP-B 完成后，可以直接在网页点击“生成今日雷达”；终端�
 
 实现：
 
-- 增加 `web` 可选依赖：FastAPI 和 Uvicorn。
+- 使用 Python 标准库 `ThreadingHTTPServer`，不增加 Web 框架依赖。
 - 新增 `finance-lab serve`。
 - 实现 health 和 latest radar 两个 GET API。
 - Vite 开发代理固定指向 `127.0.0.1:8000`。
@@ -624,6 +579,8 @@ pnpm build
 已完成：
 
 - `web/` React + Vite + TypeScript strict + Tailwind CSS 工程。
+- `finance-lab serve`、只读 health/latest API 和 Vite `/api` 代理。
+- `/today` 已读取 `reports/daily-radar.json` 的最新成功快照。
 - `/today` 的导航、摘要条、Top 5 事件流、候选队列、验证任务和运行审计。
 - 事件来源、关键事实、候选证据和风险的渐进展开。
 - Loading、Success、Empty、Error 四种状态。
@@ -632,8 +589,7 @@ pnpm build
 
 尚未完成：
 
-- 前端尚未读取 `reports/daily-radar.json` 或本地 API。
-- 当前“刷新快照”只重新读取 fixture，不会执行 Python workflow。
+- 当前“刷新快照”只重新读取真实快照，不会执行 Python workflow。
 - 事件详情、运行历史、后台执行和真实进度仍属于 MVP-B。
 
 本项目采用 code-first UI，真实浏览器页面是视觉和交互验收标准，不再依赖外部设计工具。

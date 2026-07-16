@@ -140,7 +140,7 @@ def read_daily_radar_snapshot(path: str | Path) -> dict[str, Any]:
         payload = json.loads(target.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InvalidRadarSnapshot(f"invalid JSON snapshot: {exc}") from exc
     return validate_daily_radar_snapshot(payload)
 
