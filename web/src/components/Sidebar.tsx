@@ -1,6 +1,7 @@
-import { Activity, BookOpenText, CircleDot, Clock3, FlaskConical } from "lucide-react";
+import { Activity, BookOpenText, CircleDot, Clock3, FlaskConical, ListTree } from "lucide-react";
 
 export function Sidebar() {
+  const path = window.location.pathname;
   return (
     <aside className="hidden min-h-screen w-60 shrink-0 flex-col bg-sidebar px-5 py-7 text-white lg:flex">
       <div className="flex items-center gap-3 px-1">
@@ -15,11 +16,19 @@ export function Sidebar() {
         <p className="px-3 text-[11px] font-medium tracking-[0.16em] text-sidebar-muted">研究</p>
         <a
           href="/today"
-          aria-current="page"
-          className="mt-3 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-sm font-semibold"
+          aria-current={path === "/today" || path === "/" ? "page" : undefined}
+          className={`mt-3 flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold ${path === "/today" || path === "/" ? "bg-brand" : "text-sidebar-muted"}`}
         >
           <CircleDot className="size-4" aria-hidden="true" />
           今日雷达
+        </a>
+        <a
+          href="/events"
+          aria-current={path.startsWith("/events") ? "page" : undefined}
+          className={`mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold ${path.startsWith("/events") ? "bg-brand" : "text-sidebar-muted"}`}
+        >
+          <ListTree className="size-4" aria-hidden="true" />
+          全部事件
         </a>
         <span className="mt-1 flex cursor-not-allowed items-center gap-3 rounded-xl px-3 py-3 text-sm text-sidebar-muted">
           <Clock3 className="size-4" aria-hidden="true" />

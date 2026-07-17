@@ -7,6 +7,8 @@ Stage = Literal["启动", "验证", "高潮", "分歧", "退潮", "待判断"]
 ActionState = Literal["忽略", "放观察池", "等验证", "等回调", "可小仓试", "高潮勿追", "待判断"]
 ImpactType = Literal["direct", "indirect", "sentiment", "negative", "false_positive"]
 ImpactStrength = Literal["high", "medium", "low", "unknown"]
+ImpactDirection = Literal["positive", "negative", "mixed", "neutral", "unknown"]
+ConfidenceLevel = Literal["high", "medium", "low", "unknown"]
 VerificationStatus = Literal["verified", "unverified", "excluded"]
 ValidationStatus = Literal["pending", "done", "blocked"]
 EventSourceType = Literal["news", "announcement", "market_anomaly", "policy"]
@@ -111,7 +113,7 @@ class EventAnalysis:
     involved_entities: tuple[str, ...] = field(default_factory=tuple)
     key_facts: tuple[str, ...] = field(default_factory=tuple)
     source_quality: str = "待复核"
-    confidence: str = "low"
+    confidence: ConfidenceLevel = "low"
     reasoning: str = ""
 
 
@@ -120,7 +122,7 @@ class ValueChainTrace:
     payer: str
     receiver: str
     chain_steps: tuple[str, ...] = field(default_factory=tuple)
-    impact_direction: str = "unknown"
+    impact_direction: ImpactDirection = "unknown"
     reasoning: str = ""
 
 
@@ -138,6 +140,8 @@ class StockImpact:
     verification_status: VerificationStatus = "verified"
     verification_source: str = ""
     watchlist_hit: bool = False
+    impact_direction: ImpactDirection = "unknown"
+    confidence: ConfidenceLevel = "unknown"
 
 
 @dataclass(frozen=True)

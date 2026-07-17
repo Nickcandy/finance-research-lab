@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import os
+import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -38,21 +40,31 @@ def sync_a_share_universe_from_akshare(
 def write_a_share_universe(companies: Iterable[AShareCompany], output_path: str | Path) -> None:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=A_SHARE_UNIVERSE_FIELDS)
-        writer.writeheader()
-        for company in companies:
-            writer.writerow(
-                {
-                    "symbol": company.symbol,
-                    "name": company.name,
-                    "market": company.market,
-                    "industry": company.industry,
-                    "themes": ";".join(company.themes),
-                    "business_summary": company.business_summary,
-                    "source": company.source,
-                }
-            )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=A_SHARE_UNIVERSE_FIELDS)
+            writer.writeheader()
+            for company in companies:
+                writer.writerow(
+                    {
+                        "symbol": company.symbol,
+                        "name": company.name,
+                        "market": company.market,
+                        "industry": company.industry,
+                        "themes": ";".join(company.themes),
+                        "business_summary": company.business_summary,
+                        "source": company.source,
+                    }
+                )
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _fetch_akshare_stock_basics() -> Iterable[RawCompanyRow]:

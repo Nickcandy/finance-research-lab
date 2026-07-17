@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,6 +10,9 @@ from .baostock_market import BaoStockMarketProvider
 from .daily_radar_report import render_daily_event_radar
 from .daily_radar_snapshot import build_daily_radar_snapshot, write_daily_radar_snapshot
 from .event_clustering import cluster_market_events, rank_hot_events
+from .event_eligibility import is_market_event_researchable
+from .event_catalog import event_catalog_path, write_event_catalog
+from .event_analysis import event_analysis_path, write_successful_event_analysis
 from .event_sources import SHANGHAI, ThsNewsSource
 from .evidence_tool_agent import run_evidence_tool_calls
 from .llm.chat_completions_client import ChatCompletionsClient
@@ -27,10 +30,12 @@ from .evidence import (
 )
 from .models import (
     CompanyAnnouncement,
+    AShareCompany,
     Evidence,
     EvidencePlan,
     FinancialSnapshot,
     MarketSnapshot,
+    MarketEvent,
     NewsItem,
     ResearchAgentResult,
     ResearchReport,
@@ -53,6 +58,13 @@ from .tools import (
 DEFAULT_A_SHARE_UNIVERSE_PATH = "data/a_share_universe.example.csv"
 MAX_DAILY_CANDIDATES_PER_EVENT = 3
 MAX_EVENT_RESEARCH_BODY_CHARS = 12_000
+
+
+@dataclass(frozen=True)
+class MarketEventAnalysisOutcome:
+    report: ResearchReport
+    steps: tuple[AgentStep, ...]
+    warnings: tuple[str, ...]
 
 
 def _summarize_output(output: Any) -> str:
@@ -227,7 +239,14 @@ def run_daily_radar_workflow(
         return AgentRun("daily_radar", steps, str(output_path))
 
     try:
-        ranked_events = rank_hot_events(cluster_result.output)
+        all_ranked_events = (
+            rank_hot_events(cluster_result.output, limit=len(cluster_result.output))
+            if cluster_result.output
+            else ()
+        )
+        ranked_events = tuple(
+            event for event in all_ranked_events if is_market_event_researchable(event)
+        )[:5]
     except Exception as exc:
         rank_result = ToolResult("rank_hot_events", "error", (), str(exc))
     else:
@@ -261,50 +280,19 @@ def run_daily_radar_workflow(
     daily_tool_results: tuple[ToolResult, ...] = ()
     daily_attempted_tools: dict[str, frozenset[str]] = {}
     for index, event in enumerate(rank_result.output, start=1):
-        news = _market_event_news(event)
-        trace_result = trace_news_tool(
-            news,
+        report, daily_tool_results, event_steps, _ = _analyze_market_event(
+            event,
             watchlist_result.output,
             universe_result.output,
+            registry,
+            initial_results=daily_tool_results,
+            attempted_tools=daily_attempted_tools,
+            step_suffix=f":{index}",
         )
-        steps.append(_step(f"analyze_event:{index}", trace_result))
-        if trace_result.status == "error":
+        steps.extend(event_steps)
+        if report is None:
             reports.append(None)
             continue
-
-        candidate_symbols = tuple(
-            dict.fromkeys(
-                impact.symbol
-                for impact in trace_result.output.stock_impacts
-                if (
-                    impact.market == "A股"
-                    and impact.verification_status != "excluded"
-                    and impact.impact_type in {"direct", "indirect", "negative"}
-                    and impact.impact_strength in {"medium", "high"}
-                )
-            )
-        )[:MAX_DAILY_CANDIDATES_PER_EVENT]
-        daily_tool_results, evidence_warnings = _complete_candidate_evidence(
-            registry,
-            candidate_symbols,
-            daily_tool_results,
-            daily_attempted_tools,
-            steps,
-        )
-        announcements, financials, markets = _evidence_outputs(daily_tool_results)
-        report = _apply_tool_verification(
-            trace_result.output,
-            announcements,
-            financials,
-            markets,
-        )
-        verify_result = ToolResult(
-            "verify_event_candidates",
-            "success",
-            report,
-            "；".join(evidence_warnings),
-        )
-        steps.append(_step(f"verify_event_candidates:{index}", verify_result))
         reports.append(report)
 
     if not any(report is not None for report in reports):
@@ -337,8 +325,60 @@ def run_daily_radar_workflow(
             steps,
             window_start,
             window_end,
+            all_events=all_ranked_events,
             generated_at=window_end,
         )
+    except Exception as exc:
+        snapshot_result = ToolResult("write_daily_radar_snapshot", "error", "", str(exc))
+        steps.append(_step("write_snapshot", snapshot_result))
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    catalog_path = event_catalog_path(json_output_path, snapshot["run"]["id"])
+    try:
+        write_event_catalog(all_ranked_events, snapshot["run"]["id"], catalog_path)
+    except Exception as exc:
+        catalog_result = ToolResult("write_event_catalog", "error", "", str(exc))
+    else:
+        catalog_result = ToolResult("write_event_catalog", "success", str(catalog_path))
+    steps.append(_step("write_event_catalog", catalog_result))
+    if catalog_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
+        for index, (event, report) in enumerate(
+            zip(rank_result.output, reports), start=1
+        ):
+            if report is None:
+                continue
+            event_id = snapshot["events"][index - 1]["id"]
+            event_steps = tuple(
+                step for step in steps if step.step_name.endswith(f":{index}")
+            )
+            write_successful_event_analysis(
+                event,
+                report,
+                event_steps,
+                snapshot["events"][index - 1]["warnings"],
+                run_id=snapshot["run"]["id"],
+                event_id=event_id,
+                rank=index,
+                output_path=event_analysis_path(
+                    json_output_path, snapshot["run"]["id"], event_id
+                ),
+            )
+    except Exception as exc:
+        analyses_result = ToolResult("write_event_analyses", "error", "", str(exc))
+    else:
+        analyses_result = ToolResult(
+            "write_event_analyses",
+            "success",
+            f"{sum(report is not None for report in reports)} item(s)",
+        )
+    steps.append(_step("write_event_analyses", analyses_result))
+    if analyses_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
         snapshot_path = write_daily_radar_snapshot(snapshot, json_output_path)
     except Exception as exc:
         snapshot_result = ToolResult("write_daily_radar_snapshot", "error", "", str(exc))
@@ -354,6 +394,108 @@ def _shanghai_time(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=SHANGHAI)
     return value.astimezone(SHANGHAI)
+
+
+def run_market_event_analysis(
+    event: MarketEvent,
+    *,
+    watchlist_path: str | Path = "data/watchlist.example.csv",
+    a_share_universe_path: str | Path = "data/a_share_universe.csv",
+    evidence_cache_path: str | Path = "data/akshare_cache",
+    market_cache_path: str | Path = "data/baostock_cache",
+) -> MarketEventAnalysisOutcome:
+    """Run the daily-radar research pipeline for one persisted market event."""
+
+    watchlist_result = read_watchlist_tool(watchlist_path)
+    universe_result = read_a_share_universe_tool(a_share_universe_path)
+    if watchlist_result.status == "error":
+        raise RuntimeError(watchlist_result.error)
+    if universe_result.status == "error":
+        raise RuntimeError(universe_result.error)
+    company_provider = AkShareEvidenceProvider(evidence_cache_path)
+    market_provider = FallbackMarketProvider(
+        BaoStockMarketProvider(market_cache_path),
+        company_provider,
+    )
+    report, _, steps, warnings = _analyze_market_event(
+        event,
+        watchlist_result.output,
+        universe_result.output,
+        _research_tool_registry(company_provider, market_provider),
+    )
+    if report is None:
+        message = steps[-1].summary if steps else "market event analysis failed"
+        raise RuntimeError(message)
+    return MarketEventAnalysisOutcome(report, tuple(steps), tuple(warnings))
+
+
+def _analyze_market_event(
+    event: MarketEvent,
+    watchlist: list[WatchlistItem],
+    universe: list[AShareCompany],
+    registry: ToolRegistry,
+    *,
+    initial_results: tuple[ToolResult, ...] = (),
+    attempted_tools: dict[str, frozenset[str]] | None = None,
+    step_suffix: str = "",
+) -> tuple[
+    ResearchReport | None,
+    tuple[ToolResult, ...],
+    list[AgentStep],
+    list[str],
+]:
+    steps: list[AgentStep] = []
+    attempts = attempted_tools if attempted_tools is not None else {}
+    trace_result = trace_news_tool(_market_event_news(event), watchlist, universe)
+    steps.append(_step(f"analyze_event{step_suffix}", trace_result))
+    if trace_result.status == "error":
+        return None, initial_results, steps, [trace_result.error]
+
+    candidate_symbols = tuple(
+        dict.fromkeys(
+            impact.symbol
+            for impact in trace_result.output.stock_impacts
+            if (
+                impact.market == "A股"
+                and impact.verification_status == "verified"
+                and impact.impact_type in {"direct", "indirect", "negative"}
+                and impact.impact_strength in {"medium", "high"}
+            )
+        )
+    )[:MAX_DAILY_CANDIDATES_PER_EVENT]
+    tool_results, evidence_warnings = _complete_candidate_evidence(
+        registry,
+        candidate_symbols,
+        initial_results,
+        attempts,
+        steps,
+    )
+    announcements, financials, markets = _evidence_outputs(tool_results)
+    report = _apply_tool_verification(
+        trace_result.output,
+        announcements,
+        financials,
+        markets,
+    )
+    identity_warnings = [
+        evidence
+        for impact in trace_result.output.stock_impacts
+        for evidence in impact.evidence
+        if "纠正证券代码" in evidence
+    ]
+    warnings = [
+        warning
+        for warning in (trace_result.error, *identity_warnings, *evidence_warnings)
+        if warning
+    ]
+    verify_result = ToolResult(
+        "verify_event_candidates",
+        "success",
+        report,
+        "；".join(warnings),
+    )
+    steps.append(_step(f"verify_event_candidates{step_suffix}", verify_result))
+    return report, tool_results, steps, warnings
 
 
 def _market_event_news(event) -> NewsItem:
@@ -433,7 +575,11 @@ def run_research_agent_workflow(
         return AgentRun("research_agent", steps, str(output_path))
 
     candidate_symbols = tuple(
-        dict.fromkeys(impact.symbol for impact in trace_result.output.stock_impacts if impact.market == "A股")
+        dict.fromkeys(
+            impact.symbol
+            for impact in trace_result.output.stock_impacts
+            if impact.market == "A股" and impact.verification_status == "verified"
+        )
     )
     tool_results: tuple[ToolResult, ...] = ()
     try:

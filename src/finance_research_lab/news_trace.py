@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import csv
+import unicodedata
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .impact_scoring import infer_news_impact_direction
 from .models import (
     AShareCompany,
+    ConfidenceLevel,
     EventAnalysis,
+    ImpactDirection,
     NewsTrace,
     NewsItem,
     ResearchReport,
@@ -14,6 +19,15 @@ from .models import (
     ValueChainTrace,
     WatchlistItem,
 )
+from .value_chains import (
+    ValueChainNode,
+    ValueChainRelation,
+    best_value_chain_relation,
+    infer_value_chain_nodes,
+    normalize_semantic_text,
+)
+
+MAX_MAPPED_CANDIDATES = 10
 
 THEME_KEYWORDS = {
     "AI": ["ai", "人工智能", "大模型", "算力", "gpu", "nvidia", "openai", "xai"],
@@ -147,19 +161,25 @@ def build_research_report(
     a_share_universe: list[AShareCompany] | None = None,
     proposed_impacts: tuple[StockImpact, ...] = (),
 ) -> ResearchReport:
-    themes = infer_themes(f"{news.headline} {news.body}")
+    news_text = f"{news.headline} {news.body}"
+    themes = infer_themes(news_text)
     payer, receiver, chain = _value_chain_for_themes(themes)
+    impact_direction = infer_news_impact_direction(news_text)
     stock_impacts = _build_stock_impacts(
         themes=themes,
         watchlist=watchlist,
         a_share_universe=a_share_universe,
         proposed_impacts=proposed_impacts,
+        news_text=news_text,
+        chain_steps=tuple(chain),
+        event_direction=impact_direction,
+        event_confidence="low",
     )
 
     return ResearchReport(
         raw_news=news,
         event=EventAnalysis(
-            event_type=classify_news_type(f"{news.headline} {news.body}"),
+            event_type=classify_news_type(news_text),
             themes=tuple(sorted(themes)),
             key_facts=_key_facts_for_themes(themes),
             source_quality="待复核",
@@ -170,8 +190,8 @@ def build_research_report(
             payer=payer,
             receiver=receiver,
             chain_steps=tuple(chain),
-            impact_direction="positive" if themes else "unknown",
-            reasoning="基于已识别主题匹配内置产业链模板。",
+            impact_direction=impact_direction,
+            reasoning="基于新闻中的显式方向词做保守判断；未命中时保持待判断。",
         ),
         stock_impacts=tuple(stock_impacts),
         validation_tasks=(
@@ -195,6 +215,10 @@ def verify_research_report_candidates(
         watchlist=watchlist,
         a_share_universe=a_share_universe,
         proposed_impacts=report.stock_impacts,
+        news_text=f"{report.raw_news.headline} {report.raw_news.body}",
+        chain_steps=report.value_chain.chain_steps,
+        event_direction=report.value_chain.impact_direction,
+        event_confidence=report.event.confidence,
     )
     return ResearchReport(
         raw_news=report.raw_news,
@@ -235,33 +259,96 @@ def _build_stock_impacts(
     watchlist: list[WatchlistItem],
     a_share_universe: list[AShareCompany] | None,
     proposed_impacts: tuple[StockImpact, ...],
+    news_text: str = "",
+    chain_steps: tuple[str, ...] = (),
+    event_direction: ImpactDirection = "unknown",
+    event_confidence: ConfidenceLevel = "unknown",
 ) -> list[StockImpact]:
     if a_share_universe is None:
         return list(proposed_impacts) or _map_stock_impacts(themes, watchlist)
 
     watchlist_by_symbol = {item.symbol: item for item in watchlist}
     universe_by_symbol = {company.symbol: company for company in a_share_universe}
-    impacts: list[StockImpact] = []
+    universe_by_name: dict[str, list[AShareCompany]] = {}
+    for company in a_share_universe:
+        universe_by_name.setdefault(_normalize_company_name(company.name), []).append(company)
+    event_nodes = infer_value_chain_nodes(" ".join((*sorted(themes), news_text)))
+    if not event_nodes:
+        event_nodes = infer_value_chain_nodes(" ".join(chain_steps))
+    ranked_impacts: list[tuple[tuple[int, int, str], StockImpact]] = []
     seen: set[str] = set()
 
     for impact in proposed_impacts:
         company = universe_by_symbol.get(impact.symbol)
+        symbol_matches_name = company is not None and (
+            _normalize_company_name(company.name) == _normalize_company_name(impact.name)
+        )
+        name_matches = universe_by_name.get(_normalize_company_name(impact.name), [])
+        corrected = False
+        if not symbol_matches_name and len(name_matches) == 1:
+            company = name_matches[0]
+            corrected = company.symbol != impact.symbol
+        elif not symbol_matches_name:
+            company = None
+
         if company is None:
-            impacts.append(_unverified_impact(impact))
+            ranked_impacts.append(((9, 1, impact.symbol), _unverified_impact(impact)))
         else:
-            impacts.append(_verified_impact(company, themes, watchlist_by_symbol, impact))
-        seen.add(impact.symbol)
+            match = _match_company(company, themes, news_text, event_nodes)
+            if match is None:
+                unresolved = _unverified_impact(
+                    replace(impact, symbol=company.symbol, name=company.name)
+                )
+                if corrected:
+                    unresolved = replace(
+                        unresolved,
+                        evidence=unresolved.evidence
+                        + (
+                            f"A 股 universe 按公司名纠正证券代码："
+                            f"{impact.symbol} -> {company.symbol}",
+                        ),
+                    )
+                ranked_impacts.append(((8, 1, company.symbol), unresolved))
+                seen.add(company.symbol)
+                continue
+            verified = _impact_from_match(
+                company,
+                match,
+                watchlist_by_symbol,
+                impact,
+                event_direction,
+                event_confidence,
+            )
+            if corrected:
+                verified = replace(
+                    verified,
+                    evidence=verified.evidence
+                    + (
+                        f"A 股 universe 按公司名纠正证券代码：{impact.symbol} -> {company.symbol}",
+                    ),
+                )
+            ranked_impacts.append((_impact_sort_key(match, verified), verified))
+            seen.add(company.symbol)
 
     for company in a_share_universe:
         if company.symbol in seen:
             continue
-        impact = _impact_from_company(themes, company, watchlist_by_symbol)
-        if impact is None:
+        match = _match_company(company, themes, news_text, event_nodes)
+        if match is None:
             continue
-        impacts.append(impact)
+        impact = _impact_from_match(
+            company,
+            match,
+            watchlist_by_symbol,
+            None,
+            event_direction,
+            event_confidence,
+        )
+        ranked_impacts.append((_impact_sort_key(match, impact), impact))
         seen.add(company.symbol)
 
-    return impacts
+    ranked_impacts.sort(key=lambda item: item[0])
+    return [impact for _, impact in ranked_impacts[:MAX_MAPPED_CANDIDATES]]
 
 
 def _map_stock_impacts(themes: set[str], watchlist: list[WatchlistItem]) -> list[StockImpact]:
@@ -302,72 +389,159 @@ def _map_stock_impacts(themes: set[str], watchlist: list[WatchlistItem]) -> list
     return impacts
 
 
-def _impact_from_company(
-    themes: set[str],
-    company: AShareCompany,
-    watchlist_by_symbol: dict[str, WatchlistItem],
-) -> StockImpact | None:
-    overlap = themes.intersection(company.themes)
-    if len(overlap) >= 2:
-        impact_type = "direct"
-        strength = "high"
-        reasoning = "A 股 universe 主题与新闻主题重合度较高。"
-    elif len(overlap) == 1:
-        impact_type = "indirect"
-        strength = "medium"
-        reasoning = "A 股 universe 主题与新闻主题存在单一交集。"
-    elif any(theme.lower() in company.business_summary.lower() for theme in themes):
-        impact_type = "sentiment"
-        strength = "low"
-        reasoning = "公司业务摘要提到新闻主题，但主题标签未直接匹配。"
-    else:
-        return None
+@dataclass(frozen=True)
+class _CompanyMatch:
+    priority: int
+    impact_type: str
+    impact_strength: str
+    reasoning: str
+    evidence: tuple[str, ...]
+    relation: ValueChainRelation | None = None
+    explicit: bool = False
 
-    watchlist_item = watchlist_by_symbol.get(company.symbol)
-    risks = (watchlist_item.risks,) if watchlist_item and watchlist_item.risks else ()
-    evidence = (
+
+def _match_company(
+    company: AShareCompany,
+    themes: set[str],
+    news_text: str,
+    event_nodes: tuple[ValueChainNode, ...],
+) -> _CompanyMatch | None:
+    normalized_news = normalize_semantic_text(news_text)
+    explicit = bool(
+        normalize_semantic_text(company.name)
+        and normalize_semantic_text(company.name) in normalized_news
+    )
+    company_nodes = infer_value_chain_nodes(
+        " ".join((*company.themes, company.business_summary))
+    )
+    relation = best_value_chain_relation(company_nodes, event_nodes)
+    overlap = themes.intersection(company.themes)
+    base_evidence = (
         f"A 股 universe 主题匹配：{' / '.join(company.themes) or '未标注主题'}",
         f"行业：{company.industry or '未提供'}",
     )
+    if explicit:
+        return _CompanyMatch(
+            0,
+            "direct",
+            "high",
+            "新闻明确提及该公司，本地 A 股 universe 已确认标准身份。",
+            base_evidence + (f"新闻明确提及公司：{company.name}",),
+            relation,
+            True,
+        )
+    if relation is not None:
+        relation_evidence = (
+            f"本地产业链映射：{relation.chain_label}；公司节点={relation.company_node}；"
+            f"事件节点={relation.event_node}；关系={relation.relation}；距离={relation.distance}",
+        )
+        if relation.relation == "同环节":
+            return _CompanyMatch(
+                1,
+                "direct",
+                "high",
+                "公司产品与事件位于同一产业链节点。",
+                base_evidence + relation_evidence,
+                relation,
+            )
+        if relation.distance == 1:
+            return _CompanyMatch(
+                2,
+                "indirect",
+                "medium",
+                f"公司位于事件节点的{relation.relation}一跳位置。",
+                base_evidence + relation_evidence,
+                relation,
+            )
+        return _CompanyMatch(
+            3,
+            "indirect",
+            "low",
+            f"公司与事件存在多跳{relation.relation}产业链关系。",
+            base_evidence + relation_evidence,
+            relation,
+        )
+    if len(overlap) >= 2:
+        return _CompanyMatch(
+            4,
+            "direct",
+            "high",
+            "A 股 universe 主题与新闻主题重合度较高。",
+            base_evidence,
+        )
+    if len(overlap) == 1:
+        return _CompanyMatch(
+            4,
+            "indirect",
+            "medium",
+            "A 股 universe 主题与新闻主题存在单一交集。",
+            base_evidence,
+        )
+    if any(normalize_semantic_text(theme) in normalize_semantic_text(company.business_summary) for theme in themes):
+        return _CompanyMatch(
+            5,
+            "sentiment",
+            "low",
+            "公司业务摘要提到新闻主题，但主题标签未直接匹配。",
+            base_evidence,
+        )
+    return None
+
+
+def _impact_from_match(
+    company: AShareCompany,
+    match: _CompanyMatch,
+    watchlist_by_symbol: dict[str, WatchlistItem],
+    proposed: StockImpact | None = None,
+    event_direction: ImpactDirection = "unknown",
+    event_confidence: ConfidenceLevel = "unknown",
+) -> StockImpact:
+    watchlist_item = watchlist_by_symbol.get(company.symbol)
+    watchlist_risks = (watchlist_item.risks,) if watchlist_item and watchlist_item.risks else ()
+    proposed_risks = proposed.risks if proposed else ()
+    impact_type = (
+        proposed.impact_type
+        if proposed and match.explicit and proposed.impact_type != "negative"
+        else match.impact_type
+    )
+    impact_strength = (
+        proposed.impact_strength if proposed and match.explicit else match.impact_strength
+    )
+    proposed_direction = proposed.impact_direction if proposed else "unknown"
+    if proposed and proposed.impact_type == "negative" and proposed_direction == "unknown":
+        proposed_direction = "negative"
+    can_inherit_event_direction = match.priority <= 1
+    impact_direction = (
+        proposed_direction
+        if proposed_direction != "unknown"
+        else event_direction if can_inherit_event_direction else "unknown"
+    )
+    confidence = proposed.confidence if proposed else "unknown"
+    if confidence == "unknown" and impact_direction != "unknown":
+        confidence = event_confidence
     return StockImpact(
         symbol=company.symbol,
         name=company.name,
         market=company.market,
         impact_type=impact_type,
-        impact_strength=strength,
-        themes=company.themes,
-        reasoning=reasoning,
-        evidence=evidence,
-        risks=risks,
+        impact_strength=impact_strength,
+        themes=company.themes or (proposed.themes if proposed else ()),
+        reasoning=(proposed.reasoning if proposed and proposed.reasoning else match.reasoning),
+        evidence=(proposed.evidence if proposed else ()) + match.evidence,
+        risks=tuple(dict.fromkeys((*proposed_risks, *watchlist_risks))),
         verification_status="verified",
         verification_source=company.source or "a_share_universe",
         watchlist_hit=watchlist_item is not None,
+        impact_direction=impact_direction,
+        confidence=confidence,
     )
 
 
-def _verified_impact(
-    company: AShareCompany,
-    themes: set[str],
-    watchlist_by_symbol: dict[str, WatchlistItem],
-    proposed: StockImpact,
-) -> StockImpact:
-    base = _impact_from_company(themes, company, watchlist_by_symbol)
-    if base is not None:
-        return base
-    watchlist_item = watchlist_by_symbol.get(company.symbol)
-    return StockImpact(
-        symbol=company.symbol,
-        name=company.name,
-        market=company.market,
-        impact_type=proposed.impact_type,
-        impact_strength=proposed.impact_strength,
-        themes=company.themes or proposed.themes,
-        reasoning=proposed.reasoning or "候选公司已在 A 股 universe 中校验，但相关性仍需补充。",
-        evidence=proposed.evidence + (f"A 股 universe 已确认公司：{company.name}",),
-        risks=proposed.risks,
-        verification_status="verified",
-        verification_source=company.source or "a_share_universe",
-        watchlist_hit=watchlist_item is not None,
+def _impact_sort_key(match: _CompanyMatch, impact: StockImpact) -> tuple[int, int, str]:
+    return (
+        match.priority,
+        0 if impact.watchlist_hit else 1,
+        impact.symbol,
     )
 
 
@@ -385,4 +559,11 @@ def _unverified_impact(impact: StockImpact) -> StockImpact:
         verification_status="unverified",
         verification_source="",
         watchlist_hit=impact.watchlist_hit,
+        impact_direction=impact.impact_direction,
+        confidence=impact.confidence,
     )
+
+
+def _normalize_company_name(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(normalized.split())

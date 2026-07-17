@@ -117,18 +117,36 @@ def test_serve_cli_has_local_read_only_defaults() -> None:
 def test_serve_cli_forwards_custom_server_options(monkeypatch) -> None:
     captured = {}
 
-    def fake_serve(host, port, snapshot_path):
-        captured.update(host=host, port=port, snapshot_path=snapshot_path)
+    def fake_serve(host, port, snapshot_path, *, analysis_config):
+        captured.update(
+            host=host,
+            port=port,
+            snapshot_path=snapshot_path,
+            analysis_config=analysis_config,
+        )
 
     monkeypatch.setattr(cli, "serve", fake_serve)
 
     assert cli.main(
-        ["serve", "--host", "127.0.0.2", "--port", "8123", "--snapshot", "tmp/radar.json"]
+        [
+            "serve", "--host", "127.0.0.2", "--port", "8123",
+            "--snapshot", "tmp/radar.json",
+            "--watchlist", "tmp/watchlist.csv",
+            "--a-share-universe", "tmp/universe.csv",
+            "--evidence-cache", "tmp/evidence",
+            "--market-cache", "tmp/market",
+        ]
     ) == 0
     assert captured == {
         "host": "127.0.0.2",
         "port": 8123,
         "snapshot_path": "tmp/radar.json",
+        "analysis_config": cli.AnalysisConfig(
+            watchlist_path="tmp/watchlist.csv",
+            a_share_universe_path="tmp/universe.csv",
+            evidence_cache_path="tmp/evidence",
+            market_cache_path="tmp/market",
+        ),
     }
 
 
@@ -203,6 +221,58 @@ def test_sync_a_share_universe_cli_returns_error_on_sync_failure(monkeypatch, ca
 
     assert exit_code == 1
     assert "cannot sync tmp.csv" in capsys.readouterr().err
+
+
+def test_sync_company_profiles_cli_defaults() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["sync-company-profiles"])
+
+    assert args.universe == "data/a_share_universe.csv"
+    assert args.cache == "data/company_profile_cache"
+    assert args.output == "data/a_share_universe.csv"
+    assert args.limit == 100
+    assert args.symbols is None
+    assert args.refresh is False
+
+
+def test_sync_company_profiles_cli_forwards_symbols_and_partial_failure(
+    monkeypatch, capsys
+) -> None:
+    from finance_research_lab.company_profiles import CompanyProfileSyncResult
+
+    captured = {}
+
+    def fake_sync(universe, cache, output, symbols, limit, refresh):
+        captured.update(
+            universe=universe,
+            cache=cache,
+            output=output,
+            symbols=symbols,
+            limit=limit,
+            refresh=refresh,
+        )
+        return CompanyProfileSyncResult(2, 1, 0, 1, 8, output)
+
+    monkeypatch.setattr(cli, "sync_company_profiles", fake_sync)
+
+    exit_code = cli.main(
+        [
+            "sync-company-profiles",
+            "--symbols",
+            "300308.SZ",
+            "001309.SZ",
+            "--limit",
+            "5",
+            "--refresh",
+        ]
+    )
+
+    assert exit_code == 1
+    assert captured["symbols"] == ("300308.SZ", "001309.SZ")
+    assert captured["limit"] == 5
+    assert captured["refresh"] is True
+    assert "failed=1" in capsys.readouterr().out
 
 
 def test_sync_a_share_evidence_cli_accepts_symbols() -> None:

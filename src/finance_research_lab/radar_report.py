@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from .impact_scoring import format_impact_score, impact_direction_label, stock_impact_score
 from .models import ResearchReport, StockImpact, ValidationTask
 
 
@@ -126,6 +127,8 @@ def _format_candidates(candidates: list[tuple[ResearchReport, StockImpact]]) -> 
 def _candidate_line(report: ResearchReport, impact: StockImpact) -> str:
     return (
         f"- {impact.name}（{impact.symbol}，{impact.market}）："
+        f"{impact_direction_label(impact.impact_direction)} "
+        f"{format_impact_score(stock_impact_score(impact))}（{impact.confidence}） / "
         f"{impact.impact_type} / {impact.impact_strength}；"
         f"校验 {_verification_label(impact)}；"
         f"Watchlist {'命中' if impact.watchlist_hit else '未命中'}；"
@@ -143,6 +146,8 @@ def _format_impacts(impacts: tuple[StockImpact, ...]) -> str:
 def _candidate_line_for_trace(impact: StockImpact) -> str:
     return (
         f"- {impact.name}（{impact.symbol}，{impact.market}）："
+        f"{impact_direction_label(impact.impact_direction)} "
+        f"{format_impact_score(stock_impact_score(impact))}（{impact.confidence}） / "
         f"{impact.impact_type} / {impact.impact_strength}；"
         f"校验 {_verification_label(impact)}；{impact.reasoning or '待补充'}"
     )

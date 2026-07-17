@@ -14,11 +14,12 @@ from .models import (
 STAGES = {"启动", "验证", "高潮", "分歧", "退潮", "待判断"}
 ACTION_STATES = {"忽略", "放观察池", "等验证", "等回调", "可小仓试", "高潮勿追", "待判断"}
 IMPACT_TYPES = {"direct", "indirect", "sentiment", "negative", "false_positive"}
+OUTPUT_IMPACT_TYPES = IMPACT_TYPES - {"negative"}
 IMPACT_STRENGTHS = {"high", "medium", "low", "unknown"}
 VERIFICATION_STATUSES = {"verified", "unverified", "excluded"}
 VALIDATION_STATUSES = {"pending", "done", "blocked"}
 CONFIDENCES = {"high", "medium", "low", "unknown"}
-IMPACT_DIRECTIONS = {"positive", "negative", "mixed", "unknown"}
+IMPACT_DIRECTIONS = {"positive", "negative", "mixed", "neutral", "unknown"}
 
 
 def research_report_json_schema() -> dict[str, Any]:
@@ -72,8 +73,16 @@ def research_report_json_schema() -> dict[str, Any]:
                         "symbol": {"type": "string"},
                         "name": {"type": "string"},
                         "market": {"type": "string"},
-                        "impact_type": {"type": "string", "enum": sorted(IMPACT_TYPES)},
+                        "impact_type": {
+                            "type": "string",
+                            "enum": sorted(OUTPUT_IMPACT_TYPES),
+                        },
                         "impact_strength": {"type": "string", "enum": sorted(IMPACT_STRENGTHS)},
+                        "impact_direction": {
+                            "type": "string",
+                            "enum": sorted(IMPACT_DIRECTIONS),
+                        },
+                        "confidence": {"type": "string", "enum": sorted(CONFIDENCES)},
                         "themes": string_array,
                         "reasoning": {"type": "string"},
                         "evidence": string_array,
@@ -184,11 +193,15 @@ def _parse_value_chain(data: dict[str, Any]) -> ValueChainTrace:
 
 
 def _parse_stock_impact(data: dict[str, Any], path: str) -> StockImpact:
+    impact_type = _enum(data.get("impact_type"), f"{path}.impact_type", IMPACT_TYPES)
+    direction = data.get("impact_direction")
+    if direction is None:
+        direction = "negative" if impact_type == "negative" else "unknown"
     return StockImpact(
         symbol=_string(data.get("symbol"), f"{path}.symbol"),
         name=_string(data.get("name"), f"{path}.name"),
         market=_string(data.get("market"), f"{path}.market"),
-        impact_type=_enum(data.get("impact_type"), f"{path}.impact_type", IMPACT_TYPES),
+        impact_type=impact_type,
         impact_strength=_enum(
             data.get("impact_strength"),
             f"{path}.impact_strength",
@@ -205,6 +218,16 @@ def _parse_stock_impact(data: dict[str, Any], path: str) -> StockImpact:
         ),
         verification_source=_string(data.get("verification_source"), f"{path}.verification_source"),
         watchlist_hit=_bool(data.get("watchlist_hit"), f"{path}.watchlist_hit"),
+        impact_direction=_enum(
+            direction,
+            f"{path}.impact_direction",
+            IMPACT_DIRECTIONS,
+        ),
+        confidence=_enum(
+            data.get("confidence", "unknown"),
+            f"{path}.confidence",
+            CONFIDENCES,
+        ),
     )
 
 

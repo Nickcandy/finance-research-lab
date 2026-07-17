@@ -86,6 +86,50 @@ def test_cluster_merges_continuous_market_updates() -> None:
     )
 
 
+def test_cluster_merges_single_market_clause_with_context_prefix() -> None:
+    items = (
+        _news(
+            "CPO板块大幅下挫，中际旭创跌超10%",
+            "2026-07-17T09:35:28+08:00",
+            url="https://example.com/sector",
+        ),
+        _news(
+            "中际旭创盘中跌超10%",
+            "2026-07-17T09:33:46+08:00",
+            url="https://example.com/stock",
+        ),
+    )
+
+    events = cluster_market_events(items)
+
+    assert len(events) == 1
+    assert events[0].title == "CPO板块大幅下挫，中际旭创跌超10%"
+    assert events[0].source_urls == (
+        "https://example.com/sector",
+        "https://example.com/stock",
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("CPO板块下挫，中际旭创跌超10%", "新易盛盘中跌超10%"),
+        ("CPO板块下挫，中际旭创跌超10%", "中际旭创盘中涨超10%"),
+        (
+            "CPO板块下挫，中际旭创跌超10%，新易盛跌超10%",
+            "中际旭创盘中跌超10%",
+        ),
+    ],
+)
+def test_cluster_market_clause_rule_stays_conservative(first: str, second: str) -> None:
+    items = (
+        _news(first, "2026-07-17T09:35:28+08:00"),
+        _news(second, "2026-07-17T09:33:46+08:00"),
+    )
+
+    assert len(cluster_market_events(items)) == 2
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [

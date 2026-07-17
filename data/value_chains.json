@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0",
+  "chains": [
+    {
+      "id": "ai_cpo",
+      "label": "AI/CPO",
+      "nodes": [
+        {"id": "optical_chip", "label": "光芯片", "aliases": ["光芯片", "激光器芯片", "硅光芯片", "硅光", "vcsel"]},
+        {"id": "optical_component", "label": "光器件", "aliases": ["光器件", "光组件", "光引擎", "光电子器件"]},
+        {"id": "optical_module", "label": "光模块", "aliases": ["光模块", "光通信收发模块", "光收发模块", "cpo", "800g", "1.6t"]},
+        {"id": "pcb", "label": "PCB", "aliases": ["pcb", "印制电路板", "覆铜板"]},
+        {"id": "liquid_cooling", "label": "液冷", "aliases": ["液冷", "冷板", "浸没式冷却"]},
+        {"id": "power_equipment", "label": "数据中心电源", "aliases": ["数据中心电源", "ups", "服务器电源", "配电设备"]},
+        {"id": "switch_server", "label": "交换机/服务器", "aliases": ["交换机", "服务器", "ai服务器", "gpu服务器"]},
+        {"id": "data_center_cloud", "label": "数据中心/云厂商", "aliases": ["数据中心", "云厂商", "云计算", "算力中心", "ai capex"]}
+      ],
+      "edges": [
+        ["optical_chip", "optical_module"],
+        ["optical_component", "optical_module"],
+        ["optical_module", "switch_server"],
+        ["pcb", "switch_server"],
+        ["liquid_cooling", "data_center_cloud"],
+        ["power_equipment", "data_center_cloud"],
+        ["switch_server", "data_center_cloud"]
+      ]
+    },
+    {
+      "id": "semiconductor_storage",
+      "label": "半导体与存储",
+      "nodes": [
+        {"id": "semiconductor_material", "label": "半导体材料", "aliases": ["半导体材料", "硅片", "光刻胶", "电子特气", "靶材"]},
+        {"id": "semiconductor_equipment", "label": "半导体设备", "aliases": ["半导体设备", "刻蚀设备", "薄膜设备", "清洗设备", "光刻设备"]},
+        {"id": "wafer_fab", "label": "晶圆制造", "aliases": ["晶圆制造", "晶圆代工", "晶圆厂", "foundry"]},
+        {"id": "memory_chip", "label": "存储芯片", "aliases": ["存储芯片", "dram", "nand", "nor flash", "存储器芯片"]},
+        {"id": "storage_controller", "label": "存储控制器", "aliases": ["存储控制器", "主控芯片", "ssd主控", "存储主控"]},
+        {"id": "storage_module", "label": "SSD/存储模组", "aliases": ["ssd", "固态硬盘", "存储模组", "内存条", "嵌入式存储", "移动存储"]},
+        {"id": "server_terminal", "label": "服务器与终端", "aliases": ["服务器存储", "企业级存储", "消费电子终端", "智能终端"]}
+      ],
+      "edges": [
+        ["semiconductor_material", "wafer_fab"],
+        ["semiconductor_equipment", "wafer_fab"],
+        ["wafer_fab", "memory_chip"],
+        ["wafer_fab", "storage_controller"],
+        ["memory_chip", "storage_module"],
+        ["storage_controller", "storage_module"],
+        ["storage_module", "server_terminal"]
+      ]
+    },
+    {
+      "id": "robotics",
+      "label": "机器人",
+      "nodes": [
+        {"id": "robot_reducer", "label": "机器人减速器", "aliases": ["减速器", "谐波减速器", "rv减速器"]},
+        {"id": "robot_servo", "label": "伺服系统", "aliases": ["伺服系统", "伺服电机", "伺服驱动"]},
+        {"id": "robot_sensor", "label": "机器人传感器", "aliases": ["机器人传感器", "力矩传感器", "六维力传感器", "机器视觉"]},
+        {"id": "robot_component", "label": "机器人核心部件", "aliases": ["机器人核心部件", "丝杠", "关节模组", "空心杯电机"]},
+        {"id": "robot_body", "label": "机器人本体/集成", "aliases": ["机器人本体", "人形机器人", "工业机器人", "系统集成"]},
+        {"id": "robot_application", "label": "机器人应用", "aliases": ["机器人应用", "智能制造", "自动化产线", "服务机器人"]}
+      ],
+      "edges": [
+        ["robot_reducer", "robot_component"],
+        ["robot_servo", "robot_component"],
+        ["robot_sensor", "robot_component"],
+        ["robot_component", "robot_body"],
+        ["robot_body", "robot_application"]
+      ]
+    },
+    {
+      "id": "lithium_battery",
+      "label": "锂电",
+      "nodes": [
+        {"id": "battery_resource", "label": "锂电资源", "aliases": ["锂矿", "碳酸锂", "镍矿", "钴矿", "锂资源"]},
+        {"id": "battery_material", "label": "锂电材料", "aliases": ["正极材料", "负极材料", "电解液", "隔膜", "六氟磷酸锂"]},
+        {"id": "battery_cell", "label": "电芯", "aliases": ["电芯", "动力电池", "储能电池", "锂离子电池"]},
+        {"id": "battery_pack", "label": "PACK/BMS", "aliases": ["电池pack", "pack", "bms", "电池管理系统"]},
+        {"id": "battery_application", "label": "新能源车/储能", "aliases": ["新能源汽车", "新能源车", "储能系统", "电化学储能"]}
+      ],
+      "edges": [
+        ["battery_resource", "battery_material"],
+        ["battery_material", "battery_cell"],
+        ["battery_cell", "battery_pack"],
+        ["battery_pack", "battery_application"]
+      ]
+    },
+    {
+      "id": "innovative_drug_cxo",
+      "label": "创新药/CXO",
+      "nodes": [
+        {"id": "drug_discovery_cro", "label": "药物发现/CRO", "aliases": ["药物发现", "cro", "临床前研究", "医药研发外包"]},
+        {"id": "clinical_cdmo", "label": "临床服务/CDMO", "aliases": ["临床试验服务", "cdmo", "cmo", "医药生产外包"]},
+        {"id": "pharma_biotech", "label": "药企/生物科技", "aliases": ["创新药", "生物科技", "生物制药", "制药企业"]},
+        {"id": "drug_commercialization", "label": "医药商业化", "aliases": ["医药商业化", "医药销售", "药品流通", "商业化权益"]}
+      ],
+      "edges": [
+        ["drug_discovery_cro", "clinical_cdmo"],
+        ["clinical_cdmo", "pharma_biotech"],
+        ["pharma_biotech", "drug_commercialization"]
+      ]
+    }
+  ]
+}

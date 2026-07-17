@@ -1,7 +1,7 @@
 # 前端 MVP 分析与实施计划
 
-> 状态：MVP-A 已完成，真实日报已通过只读本地 API 接入
-> 日期：2026-07-16
+> 状态：MVP-A 已完成，MVP-B 已完成全量事件目录与单事件按需分析
+> 日期：2026-07-17
 > 范围：本地单用户 Web MVP，不包含 Task 5 多事件源和 Task 6 Serenity 深度分析
 
 ## 1. 结论
@@ -18,7 +18,7 @@ Markdown。下一步应优先补前端产品层，而不是继续扩展更多分
 1. **MVP-A：真实日报可视化**。增加稳定 JSON snapshot 和只读本地 API，完成好看的“今日雷达”。
 2. **MVP-B：本地可操作工作台**。增加一键运行、真实进度、事件详情和运行记录。
 
-MVP-A 已完成。MVP-B 仍预计需要 3–4 个专注开发日，完成后将具备后台运行、事件详情和运行记录。
+MVP-A 已完成。MVP-B 已增加 `/events`、`/events/:id` 和后台单事件分析；整份日报后台生成与运行记录仍未实现。
 
 ## 2. 当前状态审计
 
@@ -38,9 +38,8 @@ MVP-A 已完成。MVP-B 仍预计需要 3–4 个专注开发日，完成后将�
 
 ### 2.2 MVP-B 剩余缺口
 
-仓库现在已有稳定的 `DailyRadarSnapshot v1`、只读本地 API 和 React `/today`。当前 workflow 仍是
-同步执行，CLI 也在整个 workflow 结束后才统一打印步骤，因此页面只读取最新成功快照，不提供伪造的
-运行进度。
+仓库现在使用 `DailyRadarSnapshot v2.1`：`/today` 展示 Top 5，`/events` 展示全部聚类，单事件分析通过
+本地后台任务执行并按 `run_id + event_id` 保存。整份 daily workflow 仍由 CLI 同步启动。
 
 MVP-B 仍需增加逐步回调、运行持久化和后台执行；届时再补 `AgentStep` 的开始/结束时间与独立错误，
 用于真实进度和完整运行审计。
@@ -210,7 +209,7 @@ daily_radars
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "2.1",
   "run": {
     "id": "20260716T153011+0800",
     "status": "succeeded",
@@ -221,13 +220,15 @@ daily_radars
     "steps": []
   },
   "summary": {
-    "event_count": 5,
+    "total_event_count": 514,
+    "core_event_count": 5,
     "verified_count": 1,
     "unverified_count": 7,
     "excluded_count": 0,
     "source_count": 1
   },
   "events": [],
+  "all_events": [],
   "candidate_groups": {
     "verified": [],
     "unverified": [],
@@ -247,6 +248,7 @@ latest_published_at
 report_count / source_count
 sources[] / source_urls[]
 event_type / themes[] / key_facts[] / confidence
+overall_direction / impact_score
 value_chain.payer / receiver / chain_steps[] / direction / reasoning
 candidates[]
 analysis_status / warnings[]
@@ -258,6 +260,7 @@ analysis_status / warnings[]
 symbol / name / market
 event_ids[]
 impact_type / impact_strength
+impact_direction / impact_score / confidence
 verification_status / verification_source
 watchlist_hit
 reasoning / evidence[] / risks[]
@@ -265,6 +268,11 @@ reasoning / evidence[] / risks[]
 
 事件 ID 应由稳定输入确定性生成，不使用数组下标。候选分组和伪相关规则在 Python 侧完成，前端只做展示，
 避免 Web 与 Markdown 对同一候选得出不同分类。
+
+`all_events` 对纯个股行情使用 `analysis_status=not_applicable` 和
+`exclusion_reason=pure_stock_price_update`。详情页仍展示聚类成员，但隐藏分析按钮并说明这是行情结果、
+不是可分析的驱动事件。`/today` 增加 Watchlist 风险预警和今日研究候选 Top 10；两者均来自日报生成时
+已经完成的分析，不由前端自行评分。
 
 ## 6. 最小 API
 
@@ -276,11 +284,22 @@ GET /api/radars/latest
 ```
 
 - `GET /api/health` 返回服务状态和 snapshot 是否存在。
-- `GET /api/radars/latest` 返回 `DailyRadarSnapshot v1`。
+- `GET /api/radars/latest` 返回 `DailyRadarSnapshot v2.1`。
 - 尚未生成日报时返回 `404 radar_not_found`。
 - snapshot 损坏时返回 `500 invalid_radar_snapshot`，不能吞掉解析错误。
 
 开发环境通过 Vite proxy 把 `/api` 转发到 `http://127.0.0.1:8000`，因此不需要开放任意 CORS。
+
+单事件分析接口：
+
+```text
+POST /api/radars/latest/events/{event_id}/analysis
+GET  /api/radars/latest/events/{event_id}/analysis
+GET  /api/radars/latest/events/{event_id}/report
+```
+
+同一时间只运行一个事件分析。结果保存在 `reports/event-analyses/{run_id}/{event_id}.json`，完整聚类输入
+保存在 `reports/event-catalogs/{run_id}.json`；按需分析不会改写日报 Top 5 和候选汇总。
 
 ### MVP-B
 
@@ -326,7 +345,13 @@ GET  /api/radars/{run_id}
 
 完整 URL、长理由、风险和所有证据放到展开区或事件详情，不能把 Markdown 长文原样塞进首页。
 
-### 7.2 `/events/:id` 事件详情
+### 7.2 `/events` 全部事件
+
+- 展示最近 24 小时全部确定性聚类，按独立来源和新鲜度排序。
+- 支持标题、成员新闻和来源搜索；初始 50 条，每次继续加载 50 条。
+- 标记 Top 5 核心事件以及未分析、分析中、已分析、失败状态。
+
+### 7.3 `/events/:id` 事件详情
 
 MVP-B 事件详情按研究过程组织：
 
@@ -339,7 +364,7 @@ MVP-B 事件详情按研究过程组织：
 
 当前没有 Serenity 稀缺层级时，只展示已有 `chain_steps`，不得伪造稀缺性评分。
 
-### 7.3 `/runs` 运行记录
+### 7.4 `/runs` 运行记录
 
 - 运行时间、数据窗口、状态、耗时和事件数量。
 - 步骤时间线：`fetch → cluster → rank → analyze → verify → render → write`。

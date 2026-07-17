@@ -7,8 +7,9 @@ from time import sleep
 from .akshare_evidence import AkShareEvidenceProvider
 from .a_share_universe import sync_a_share_universe_from_akshare
 from .baostock_market import BaoStockMarketProvider
+from .company_profiles import sync_company_profiles
 from .market_evidence import FallbackMarketProvider
-from .web_api import serve
+from .web_api import AnalysisConfig, serve
 from .workflow import (
     run_daily_radar_workflow,
     run_news_trace_workflow,
@@ -86,7 +87,17 @@ def research_agent_cmd(args: argparse.Namespace) -> int:
 
 
 def serve_cmd(args: argparse.Namespace) -> int:
-    serve(args.host, args.port, args.snapshot)
+    serve(
+        args.host,
+        args.port,
+        args.snapshot,
+        analysis_config=AnalysisConfig(
+            watchlist_path=args.watchlist,
+            a_share_universe_path=args.a_share_universe,
+            evidence_cache_path=args.evidence_cache,
+            market_cache_path=args.market_cache,
+        ),
+    )
     return 0
 
 
@@ -123,6 +134,29 @@ def sync_a_share_evidence_cmd(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def sync_company_profiles_cmd(args: argparse.Namespace) -> int:
+    try:
+        result = sync_company_profiles(
+            args.universe,
+            args.cache,
+            args.output,
+            symbols=tuple(args.symbols or ()),
+            limit=args.limit,
+            refresh=args.refresh,
+        )
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"wrote {result.output_path}: processed={result.processed}, "
+        f"succeeded={result.succeeded}, no_data={result.no_data}, "
+        f"failed={result.failed}, pending={result.pending}"
+    )
+    if result.pending:
+        print("run sync-company-profiles again to continue filling pending companies")
+    return 1 if result.failed else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -205,6 +239,26 @@ def build_parser() -> argparse.ArgumentParser:
         default="reports/daily-radar.json",
         help="DailyRadarSnapshot JSON path",
     )
+    web.add_argument(
+        "--watchlist",
+        default="data/watchlist.example.csv",
+        help="CSV watchlist context path for event analysis",
+    )
+    web.add_argument(
+        "--a-share-universe",
+        default="data/a_share_universe.csv",
+        help="CSV A-share universe path for event analysis",
+    )
+    web.add_argument(
+        "--evidence-cache",
+        default="data/akshare_cache",
+        help="AkShare evidence cache path for event analysis",
+    )
+    web.add_argument(
+        "--market-cache",
+        default="data/baostock_cache",
+        help="BaoStock market cache path for event analysis",
+    )
     web.set_defaults(func=serve_cmd)
 
     agent = subparsers.add_parser("research-agent", help="Generate a task/evidence Agent report")
@@ -243,6 +297,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_evidence.add_argument("--lookback-days", type=int, default=5, help="Trading days for market evidence")
     sync_evidence.set_defaults(func=sync_a_share_evidence_cmd)
+
+    sync_profiles = subparsers.add_parser(
+        "sync-company-profiles",
+        help="Incrementally fill the local A-share company semantic index",
+    )
+    sync_profiles.add_argument(
+        "--universe",
+        default="data/a_share_universe.csv",
+        help="Input CSV A-share universe path",
+    )
+    sync_profiles.add_argument(
+        "--cache",
+        default="data/company_profile_cache",
+        help="Local company profile cache path",
+    )
+    sync_profiles.add_argument(
+        "--output",
+        default="data/a_share_universe.csv",
+        help="Output CSV A-share universe path",
+    )
+    sync_profiles.add_argument(
+        "--symbols",
+        nargs="+",
+        help="Only sync these A-share symbols; when present --limit is ignored",
+    )
+    sync_profiles.add_argument("--limit", type=int, default=100, help="Maximum pending companies to sync")
+    sync_profiles.add_argument("--refresh", action="store_true", help="Ignore fresh caches for target companies")
+    sync_profiles.set_defaults(func=sync_company_profiles_cmd)
     return parser
 
 

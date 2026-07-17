@@ -1,7 +1,8 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.1",
   "run": {
     "id": "20260716T153400+0800",
+    "event_catalog_id": "20260716T153400+0800",
     "status": "succeeded",
     "generated_at": "2026-07-16T15:34:00+08:00",
     "window_start": "2026-07-15T15:30:00+08:00",
@@ -38,11 +39,14 @@
     ]
   },
   "summary": {
-    "event_count": 5,
+    "total_event_count": 5,
+    "core_event_count": 5,
     "verified_count": 1,
     "unverified_count": 5,
     "excluded_count": 1,
-    "source_count": 7
+    "source_count": 7,
+    "alert_count": 1,
+    "research_candidate_count": 1
   },
   "events": [
     {
@@ -67,6 +71,8 @@
         "产品覆盖商品、营销和客服等经营环节",
         "商家侧采用门槛和付费模式仍需确认"
       ],
+      "overall_direction": "positive",
+      "impact_score": 28,
       "confidence": "high",
       "reasoning": "多来源确认产品上线，但产业链收入传导仍处于早期。",
       "value_chain": {
@@ -84,6 +90,9 @@
           "event_ids": ["evt_jd_ai_0716"],
           "impact_type": "indirect",
           "impact_strength": "medium",
+          "impact_direction": "positive",
+          "impact_score": 45,
+          "confidence": "medium",
           "verification_status": "unverified",
           "verification_source": "",
           "watchlist_hit": false,
@@ -99,6 +108,9 @@
           "event_ids": ["evt_jd_ai_0716"],
           "impact_type": "sentiment",
           "impact_strength": "low",
+          "impact_direction": "positive",
+          "impact_score": 10,
+          "confidence": "low",
           "verification_status": "unverified",
           "verification_source": "",
           "watchlist_hit": false,
@@ -129,6 +141,8 @@
       "event_type": "业绩 / 指引",
       "themes": ["动力电池", "海外需求"],
       "key_facts": ["出口数据延续增长", "海外政策和本地化成本仍是关键变量"],
+      "overall_direction": "positive",
+      "impact_score": 80,
       "confidence": "high",
       "reasoning": "行业数据与公司披露方向一致，仍需持续跟踪盈利质量。",
       "value_chain": {
@@ -146,6 +160,9 @@
           "event_ids": ["evt_battery_export_0716"],
           "impact_type": "direct",
           "impact_strength": "high",
+          "impact_direction": "positive",
+          "impact_score": 80,
+          "confidence": "high",
           "verification_status": "verified",
           "verification_source": "公司公告 + 财报 + BaoStock 行情",
           "watchlist_hit": true,
@@ -175,6 +192,8 @@
       "event_type": "涨价 / 供需",
       "themes": ["稀土", "价格修复", "供给约束"],
       "key_facts": ["现货报价上行", "持续性取决于下游补库和配额执行"],
+      "overall_direction": "positive",
+      "impact_score": 80,
       "confidence": "medium",
       "reasoning": "价格信号已经出现，但量价共振尚未充分确认。",
       "value_chain": {
@@ -192,6 +211,9 @@
           "event_ids": ["evt_rare_earth_0716"],
           "impact_type": "direct",
           "impact_strength": "high",
+          "impact_direction": "positive",
+          "impact_score": 80,
+          "confidence": "medium",
           "verification_status": "unverified",
           "verification_source": "AkShare fallback",
           "watchlist_hit": true,
@@ -221,6 +243,8 @@
       "event_type": "政策 / 监管",
       "themes": ["创新药", "CXO", "海外监管"],
       "key_facts": ["监管方向发生变化", "适用范围和执行时间尚未明确"],
+      "overall_direction": "negative",
+      "impact_score": -55,
       "confidence": "medium",
       "reasoning": "政策影响可能较大，但需要等待正式文本和公司回应。",
       "value_chain": {
@@ -238,6 +262,9 @@
           "event_ids": ["evt_biotech_policy_0716"],
           "impact_type": "negative",
           "impact_strength": "medium",
+          "impact_direction": "negative",
+          "impact_score": -55,
+          "confidence": "medium",
           "verification_status": "unverified",
           "verification_source": "",
           "watchlist_hit": false,
@@ -264,6 +291,8 @@
       "event_type": "纯情绪题材",
       "themes": ["券商", "成交额", "风险偏好"],
       "key_facts": ["市场成交额较前期回升", "尚未形成基本面证据"],
+      "overall_direction": "positive",
+      "impact_score": 10,
       "confidence": "low",
       "reasoning": "目前更多是市场情绪映射，需要观察成交持续性。",
       "value_chain": {
@@ -281,6 +310,9 @@
           "event_ids": ["evt_broker_volume_0716"],
           "impact_type": "sentiment",
           "impact_strength": "low",
+          "impact_direction": "positive",
+          "impact_score": 10,
+          "confidence": "low",
           "verification_status": "unverified",
           "verification_source": "",
           "watchlist_hit": false,
@@ -296,6 +328,9 @@
           "event_ids": ["evt_broker_volume_0716"],
           "impact_type": "false_positive",
           "impact_strength": "low",
+          "impact_direction": "unknown",
+          "impact_score": null,
+          "confidence": "unknown",
           "verification_status": "excluded",
           "verification_source": "A 股 universe 主营校验",
           "watchlist_hit": false,
@@ -309,6 +344,34 @@
       "warnings": ["该事件仅有单一行情来源，暂不提高热度权重。"]
     }
   ],
+  "all_events": [
+    {
+      "id": "evt_jd_ai_0716",
+      "rank": 1,
+      "title": "京东推出京麦 AI 经营中心，面向商家开放智能经营能力",
+      "latest_published_at": "2026-07-16T14:52:00+08:00",
+      "report_count": 4,
+      "source_count": 3,
+      "sources": [{ "source_type": "news", "name": "同花顺财经" }],
+      "source_urls": ["https://example.com/?source=ths&event=jd-ai"],
+      "items": [{ "headline": "京东推出京麦 AI 经营中心，面向商家开放智能经营能力", "source": "同花顺财经", "url": "https://example.com/?source=ths&event=jd-ai", "published_at": "2026-07-16T14:52:00+08:00", "source_type": "news" }],
+      "analysis_status": "succeeded",
+      "exclusion_reason": ""
+    },
+    {
+      "id": "evt_battery_export_0716",
+      "rank": 2,
+      "title": "动力电池出口保持增长，海外产能与客户结构受关注",
+      "latest_published_at": "2026-07-16T13:40:00+08:00",
+      "report_count": 3,
+      "source_count": 2,
+      "sources": [{ "source_type": "news", "name": "同花顺财经" }],
+      "source_urls": ["https://example.com/?event=battery"],
+      "items": [{ "headline": "动力电池出口保持增长", "source": "同花顺财经", "url": "https://example.com/?event=battery", "published_at": "2026-07-16T13:40:00+08:00", "source_type": "news" }],
+      "analysis_status": "succeeded",
+      "exclusion_reason": ""
+    }
+  ],
   "candidate_groups": {
     "verified": [
       {
@@ -319,6 +382,9 @@
         "event_titles": ["动力电池出口保持增长，海外产能与客户结构受关注"],
         "impact_type": "direct",
         "impact_strength": "high",
+        "impact_direction": "positive",
+        "impact_score": 80,
+        "confidence": "high",
         "verification_status": "verified",
         "verification_source": "公司公告 + 财报 + BaoStock 行情",
         "watchlist_hit": true,
@@ -337,6 +403,9 @@
         "event_titles": ["京东推出京麦 AI 经营中心，面向商家开放智能经营能力"],
         "impact_type": "indirect",
         "impact_strength": "medium",
+        "impact_direction": "positive",
+        "impact_score": 45,
+        "confidence": "medium",
         "verification_status": "unverified",
         "verification_source": "",
         "watchlist_hit": false,
@@ -353,6 +422,9 @@
         "event_titles": ["京东推出京麦 AI 经营中心，面向商家开放智能经营能力"],
         "impact_type": "sentiment",
         "impact_strength": "low",
+        "impact_direction": "positive",
+        "impact_score": 10,
+        "confidence": "low",
         "verification_status": "unverified",
         "verification_source": "",
         "watchlist_hit": false,
@@ -369,6 +441,9 @@
         "event_titles": ["稀土价格出现阶段性上行，供需与配额预期升温"],
         "impact_type": "direct",
         "impact_strength": "high",
+        "impact_direction": "positive",
+        "impact_score": 80,
+        "confidence": "medium",
         "verification_status": "unverified",
         "verification_source": "AkShare fallback",
         "watchlist_hit": true,
@@ -385,6 +460,9 @@
         "event_titles": ["创新药海外监管环境出现新变化，产业链等待细则确认"],
         "impact_type": "negative",
         "impact_strength": "medium",
+        "impact_direction": "negative",
+        "impact_score": -55,
+        "confidence": "medium",
         "verification_status": "unverified",
         "verification_source": "",
         "watchlist_hit": false,
@@ -401,6 +479,9 @@
         "event_titles": ["A 股成交活跃度回升，券商板块出现情绪映射"],
         "impact_type": "sentiment",
         "impact_strength": "low",
+        "impact_direction": "positive",
+        "impact_score": 10,
+        "confidence": "low",
         "verification_status": "unverified",
         "verification_source": "",
         "watchlist_hit": false,
@@ -419,6 +500,9 @@
         "event_titles": ["A 股成交活跃度回升，券商板块出现情绪映射"],
         "impact_type": "false_positive",
         "impact_strength": "low",
+        "impact_direction": "unknown",
+        "impact_score": null,
+        "confidence": "unknown",
         "verification_status": "excluded",
         "verification_source": "A 股 universe 主营校验",
         "watchlist_hit": false,
@@ -437,6 +521,9 @@
         "event_titles": ["动力电池出口保持增长，海外产能与客户结构受关注"],
         "impact_type": "direct",
         "impact_strength": "high",
+        "impact_direction": "positive",
+        "impact_score": 80,
+        "confidence": "high",
         "verification_status": "verified",
         "verification_source": "公司公告 + 财报 + BaoStock 行情",
         "watchlist_hit": true,
@@ -453,6 +540,9 @@
         "event_titles": ["稀土价格出现阶段性上行，供需与配额预期升温"],
         "impact_type": "direct",
         "impact_strength": "high",
+        "impact_direction": "positive",
+        "impact_score": 80,
+        "confidence": "medium",
         "verification_status": "unverified",
         "verification_source": "AkShare fallback",
         "watchlist_hit": true,
@@ -463,6 +553,46 @@
       }
     ]
   },
+  "alerts": [
+    {
+      "id": "alert_broker_watchlist",
+      "event_id": "evt_broker_volume_0716",
+      "event_title": "券商板块成交放量，多只个股盘中快速拉升",
+      "symbol": "000001.SZ",
+      "name": "平安银行",
+      "direction": "negative",
+      "impact_score": -80,
+      "confidence": "high",
+      "severity": "high",
+      "reasoning": "市场风险偏好回落可能放大金融持仓波动。",
+      "evidence": ["Watchlist 与事件暴露关系已核验"],
+      "risks": ["事件影响可能快速消退"],
+      "generated_at": "2026-07-16T15:05:00+08:00"
+    }
+  ],
+  "research_candidates": [
+    {
+      "symbol": "300750.SZ",
+      "name": "宁德时代",
+      "market": "A股",
+      "event_ids": ["evt_battery_export_0716"],
+      "event_titles": ["动力电池出口保持增长，海外产能与客户结构受关注"],
+      "source_count": 2,
+      "latest_published_at": "2026-07-16T13:40:00+08:00",
+      "impact_type": "direct",
+      "impact_strength": "high",
+      "impact_direction": "positive",
+      "impact_score": 80,
+      "confidence": "high",
+      "verification_status": "verified",
+      "verification_source": "公司公告 + 财报 + BaoStock 行情",
+      "watchlist_hit": true,
+      "themes": ["动力电池", "海外产能"],
+      "reasoning": "海外客户和产能布局与事件方向直接相关。",
+      "evidence": ["公司披露海外收入保持增长"],
+      "risks": ["贸易政策变化"]
+    }
+  ],
   "validation_tasks": [
     {
       "question": "京麦 AI 是否向第三方 SaaS 开放接口或产生明确采购？",

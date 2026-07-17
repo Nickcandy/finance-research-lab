@@ -18,9 +18,12 @@ venv/
 !/data/a_share_universe.csv
 /data/akshare_cache/
 /data/baostock_cache/
+/data/company_profile_cache/
 /data/event_cache/
 /reports/*.md
 /reports/*.json
+/reports/event-catalogs/
+/reports/event-analyses/
 !/reports/.gitkeep
 
 # Frontend

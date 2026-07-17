@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { RadarEvent } from "../types/radar";
 import { formatDateTime } from "../utils/format";
+import { ImpactBadge } from "./ImpactBadge";
 import { StatusBadge } from "./StatusBadge";
 
 interface EventCardProps {
@@ -34,12 +35,15 @@ export function EventCard({ event }: EventCardProps) {
               <span>{event.report_count} 条报道</span>
             </div>
             <h2 className="mt-2 break-all text-[18px] font-semibold leading-7 tracking-[-0.02em] text-ink sm:text-xl">
-              {event.title}
+              <a href={`/events/${event.id}`} className="hover:text-brand">{event.title}</a>
             </h2>
           </div>
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
+          <ImpactBadge kind="direction" value={event.overall_direction} label="总体方向" />
+          <ImpactBadge kind="score" value={event.impact_score} />
+          <ImpactBadge kind="confidence" value={event.confidence} />
           <span className="rounded-full border border-brand/15 bg-brand-soft px-2.5 py-1 text-[11px] font-semibold text-brand">
             {event.event_type}
           </span>

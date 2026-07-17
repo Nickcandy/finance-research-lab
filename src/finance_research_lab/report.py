@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from datetime import date
 
+from .impact_scoring import (
+    format_impact_score,
+    impact_direction_label,
+    stock_impact_score,
+    summarize_event_impact,
+)
 from .models import ResearchReport, NewsTrace, StockImpact, ValidationTask, WatchlistItem
 
 
@@ -26,7 +32,10 @@ def _format_stock_impacts(impacts: tuple[StockImpact, ...]) -> str:
         lines.extend(
             [
                 f"- {impact.name}（{impact.symbol}，{impact.market}）："
-                f"{impact.impact_type} / {impact.impact_strength}",
+                f"{impact_direction_label(impact.impact_direction)} "
+                f"{format_impact_score(stock_impact_score(impact))}；"
+                f"{impact.impact_type} / {impact.impact_strength}；"
+                f"置信度 {impact.confidence}",
                 f"  - 校验：{_verification_label(impact)}",
                 f"  - Watchlist：{'命中' if impact.watchlist_hit else '未命中'}",
                 f"  - 主题：{themes}",
@@ -69,6 +78,7 @@ def render_research_report(report: ResearchReport, report_date: date | None = No
     chain = " -> ".join(report.value_chain.chain_steps)
     themes = " / ".join(report.event.themes) if report.event.themes else "待判断"
     key_facts = "\n".join(f"- {fact}" for fact in report.event.key_facts) or "- 待补充"
+    impact_summary = summarize_event_impact(report)
 
     return f"""# 研究报告：{report.raw_news.headline}
 
@@ -89,6 +99,7 @@ def render_research_report(report: ResearchReport, report_date: date | None = No
 - 主题：{themes}
 - 来源质量：{report.event.source_quality}
 - 置信度：{report.event.confidence}
+- 总体影响：{impact_direction_label(impact_summary.direction)} / {format_impact_score(impact_summary.score)}
 - 推理方式：{report.event.reasoning}
 
 ### 关键事实

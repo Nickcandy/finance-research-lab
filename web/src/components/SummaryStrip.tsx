@@ -7,7 +7,7 @@ interface SummaryStripProps {
 
 export function SummaryStrip({ summary }: SummaryStripProps) {
   const items = [
-    { label: "热点事件", value: summary.event_count, note: "Top ranked", icon: Newspaper, color: "text-brand" },
+    { label: "聚类事件", value: summary.total_event_count, note: `核心 ${summary.core_event_count}`, icon: Newspaper, color: "text-brand" },
     { label: "已校验", value: summary.verified_count, note: "证据齐全", icon: CheckCircle2, color: "text-brand" },
     { label: "待确认", value: summary.unverified_count, note: "需要补证据", icon: CircleDashed, color: "text-warning" },
     { label: "独立来源", value: summary.source_count, note: "跨事件去重", icon: RadioTower, color: "text-info" },

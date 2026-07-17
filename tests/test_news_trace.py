@@ -1,5 +1,10 @@
-from finance_research_lab.news_trace import build_research_report, build_trace, infer_themes
-from finance_research_lab.models import NewsItem, WatchlistItem
+from finance_research_lab.news_trace import (
+    build_research_report,
+    build_trace,
+    infer_themes,
+    verify_research_report_candidates,
+)
+from finance_research_lab.models import AShareCompany, NewsItem, StockImpact, WatchlistItem
 
 
 def test_infer_themes_for_ai_capex() -> None:
@@ -43,3 +48,52 @@ def test_build_research_report_maps_event_chain_and_stock_impacts() -> None:
         ("中际旭创", "direct")
     ]
     assert report.validation_tasks[0].status == "pending"
+
+
+def test_candidate_identity_is_corrected_by_unique_company_name() -> None:
+    news = NewsItem("德明利连续第三日跌停", "同花顺")
+    proposed = StockImpact(
+        "300391.SZ",
+        "德明利",
+        "A股",
+        "direct",
+        "high",
+        verification_status="unverified",
+    )
+    report = build_research_report(news, [], proposed_impacts=(proposed,))
+
+    verified = verify_research_report_candidates(
+        report,
+        [],
+        [AShareCompany("001309.SZ", "德明利", "A股", source="akshare")],
+    )
+
+    assert len(verified.stock_impacts) == 1
+    impact = verified.stock_impacts[0]
+    assert (impact.symbol, impact.name) == ("001309.SZ", "德明利")
+    assert impact.verification_status == "verified"
+    assert impact.impact_direction == "negative"
+    assert impact.confidence == "low"
+    assert "300391.SZ -> 001309.SZ" in impact.evidence[-1]
+
+
+def test_unresolved_candidate_stays_unverified() -> None:
+    news = NewsItem("未知公司异动", "同花顺")
+    proposed = StockImpact(
+        "300391.SZ",
+        "不存在的公司",
+        "A股",
+        "direct",
+        "high",
+        verification_status="unverified",
+    )
+    report = build_research_report(news, [], proposed_impacts=(proposed,))
+
+    verified = verify_research_report_candidates(
+        report,
+        [],
+        [AShareCompany("300391.SZ", "长药退", "A股", source="akshare")],
+    )
+
+    assert verified.stock_impacts[0].verification_status == "unverified"
+    assert verified.stock_impacts[0].name == "不存在的公司"

@@ -40,6 +40,8 @@ _PRODUCT_ID_RE = re.compile(
     r"(?<![a-z0-9])(?:[a-z]+[a-z0-9]*-[a-z0-9]*\d[a-z0-9-]*|[a-z]+\d+[a-z0-9-]*)(?![a-z0-9])",
     re.IGNORECASE,
 )
+_CLAUSE_SPLIT_RE = re.compile(r"[，；;。！？!?]|(?<!\d),(?!\d)")
+_MARKET_CLAUSE_NOISE = ("盘中",)
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class _PreparedItem:
     normalized_title: str
     normalized_body: str
     metric_signature: str
+    market_clause_signatures: tuple[str, ...]
     timestamp: float | None
     subject: str
     direction: int
@@ -145,6 +148,7 @@ def _prepare_item(item: NewsItem) -> _PreparedItem:
         normalized_title=normalized_title,
         normalized_body=_normalize_text(item.body),
         metric_signature=_normalize_text(_MEASUREMENT_RE.sub("#", normalized_source)),
+        market_clause_signatures=_market_clause_signatures(normalized_source),
         timestamp=_parse_timestamp(item.published_at),
         subject=_subject(item.headline),
         direction=_direction(item.headline),
@@ -205,7 +209,26 @@ def _same_event(first: _PreparedItem, second: _PreparedItem) -> bool:
         and first.metric_signature == second.metric_signature
     ):
         return True
+    if (
+        len(first.market_clause_signatures) == 1
+        and len(second.market_clause_signatures) == 1
+        and first.market_clause_signatures == second.market_clause_signatures
+    ):
+        return True
     return _bigram_dice(first.normalized_title, second.normalized_title) >= FUZZY_TITLE_THRESHOLD
+
+
+def _market_clause_signatures(headline: str) -> tuple[str, ...]:
+    signatures = []
+    for clause in _CLAUSE_SPLIT_RE.split(headline):
+        if not any(marker in clause for marker in _CONTINUOUS_MARKERS):
+            continue
+        for noise in _MARKET_CLAUSE_NOISE:
+            clause = clause.replace(noise, "")
+        signature = _normalize_text(_MEASUREMENT_RE.sub("#", clause))
+        if signature:
+            signatures.append(signature)
+    return tuple(signatures)
 
 
 def _conflicts(first: _PreparedItem, second: _PreparedItem) -> bool:

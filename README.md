@@ -69,8 +69,13 @@ URL 手动深挖辅助入口：
 ```
 
 当前实现已经包含无 URL 的 `daily-radar` 主入口，以及 `trace-news`、`radar` 和 `research-agent`
-三个 URL 手动研究入口。V2 已串通同花顺最近 24 小时新闻、事件聚类、Top 5 排序、逐事件产业链
+三个 URL 手动研究入口。V2.1 已串通同花顺最近 24 小时新闻、事件聚类、Top 5 排序、逐事件产业链
 分析、A 股候选发现和证据校验，并输出固定 Markdown 日报；更多事件源和完整 Serenity 分析仍在后续阶段。
+
+V2.1 会把只描述个股涨跌、涨跌停、成交额或市值且没有原因的新闻标记为“纯行情播报”：它仍保留在
+`/events`，但不进入核心 Top 5，也不能生成事件分析。已分析事件和股票会展示利好、利空、多空分化、
+中性或待判断方向，以及由强度和影响类型透明计算的影响指数。`/today` 还会展示 Watchlist 风险预警和
+全市场“今日研究候选”Top 10；这些结果用于安排研究优先级，不是收益预测或买入建议。
 
 ## 项目结构
 
@@ -87,6 +92,8 @@ finance-research-lab/
     workflow.py                 # 代码控制的 Agent v0 工作流
     event_sources.py            # 主动事件源
     event_clustering.py         # 确定性事件聚类与热点排序
+    company_profiles.py         # 免费公司资料同步与本地缓存
+    value_chains.py             # 确定性产业链节点和上下游映射
     daily_radar_report.py       # Event-driven 日报生成
     news_fetcher.py             # 静态 HTML 新闻抓取和正文提取
     news_trace.py               # 热点新闻追源逻辑
@@ -137,6 +144,26 @@ Structured Outputs 只能约束返回结构，不能保证投资结论正确；�
 
 ## 命令示例
 
+分批填充本地 A 股公司语义库。默认处理 100 只，重复执行直到输出 `pending=0`：
+
+```bash
+finance-lab sync-company-profiles \
+  --universe data/a_share_universe.csv \
+  --cache data/company_profile_cache \
+  --output data/a_share_universe.csv
+```
+
+也可以只同步指定股票：
+
+```bash
+finance-lab sync-company-profiles \
+  --symbols 300308.SZ 001309.SZ 920000.BJ
+```
+
+同步过程仅使用 BaoStock 与 AkShare，按股票原子缓存行业、主营、产品和主营构成；失败后重新执行即可
+续跑。新闻分析仍只读取本地 `a_share_universe.csv`，不会在请求链路实时抓公司资料。免费网页源可能因
+限流或字段变化暂时不可用，此时保留已有成功缓存并显式报告失败。
+
 生成真实日报和前端 JSON 快照：
 
 ```bash
@@ -145,7 +172,7 @@ finance-lab daily-radar \
   --json-output reports/daily-radar.json
 ```
 
-启动只读本地 API：
+启动本地 API（日报读取 + 单事件按需分析）：
 
 ```bash
 finance-lab serve --host 127.0.0.1 --port 8000
@@ -159,9 +186,13 @@ corepack pnpm install
 corepack pnpm dev
 ```
 
-访问 `http://127.0.0.1:5173/today`。Vite 会把 `/api` 转发到本地 Python 服务；页面读取
-`reports/daily-radar.json`，刷新按钮只重新读取最新成功快照，不会触发研究 workflow。可通过
+访问 `http://127.0.0.1:5173/today` 查看 Top 5，访问 `http://127.0.0.1:5173/events`
+浏览最近 24 小时全部聚类事件。事件详情页可以后台生成单事件报告，并通过 Markdown 接口查看结果。
+Vite 会把 `/api` 转发到本地 Python 服务；刷新按钮只重新读取最新成功快照。可通过
 `http://127.0.0.1:8000/api/health` 检查 API 和快照是否可用。
+
+`daily-radar` 同时写入 `DailyRadarSnapshot v2.1`、完整事件 catalog，以及 Top 5 的单事件分析产物。
+其他可研究聚类只在用户点击“生成分析报告”后调用财报和行情证据工具；纯行情播报只展示原始聚类成员。
 
 生成最近 24 小时的 Event-driven 日报：
 
@@ -306,6 +337,7 @@ V0 URL 新闻追源（辅助入口）
 - [ ] 巨潮最新公告、全市场行情异动和官方政策 source adapters
 - [x] 事件去重、聚类和热点排序
 - [x] Event-driven `daily-radar.md`
+- [x] 全量事件列表与单事件按需分析
 - [ ] Serenity 产业链层级与供给卡点分析
 
 ### Phase 3：稳定数据源与回测验证

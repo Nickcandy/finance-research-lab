@@ -30,8 +30,13 @@ describe("TodayPage", () => {
     expect(screen.getByLabelText("正在加载今日雷达")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "今日研究雷达" })).toBeInTheDocument();
     expect(screen.getByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力")).toBeInTheDocument();
-    expect(screen.getByText("宁德时代")).toBeInTheDocument();
+    expect(screen.getAllByText("宁德时代").length).toBeGreaterThan(0);
     expect(screen.getByText("Watchlist 命中 2 个候选")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Watchlist 风险预警" })).toBeInTheDocument();
+    expect(screen.getByText("平安银行")).toBeInTheDocument();
+    expect(screen.getByText("000001.SZ")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "今日研究候选" })).toBeInTheDocument();
+    expect(screen.getByText(/不是买入建议/)).toBeInTheDocument();
     expect(screen.getByText("研究辅助，不构成投资建议。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "已校验候选" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "待确认候选" })).toBeInTheDocument();
@@ -39,8 +44,18 @@ describe("TodayPage", () => {
     expect(screen.getByText("京麦 AI 是否向第三方 SaaS 开放接口或产生明确采购？")).toBeInTheDocument();
     expect(screen.getByText(/当前展示前端预览 fixture/)).toBeInTheDocument();
 
+    const firstEvent = screen.getByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力").closest("article");
+    expect(firstEvent).not.toBeNull();
+    expect(within(firstEvent!).getByText("总体方向：利好")).toBeInTheDocument();
+    expect(within(firstEvent!).getByText("指数：+28")).toBeInTheDocument();
+    expect(within(firstEvent!).getByText("置信度：高")).toBeInTheDocument();
+
     const verifiedGroup = screen.getByRole("heading", { name: "已校验候选" }).closest("section");
     expect(verifiedGroup).not.toBeNull();
+    expect(within(verifiedGroup!).getByText("直接影响 / 高强度")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("方向：利好")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("指数：+80")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("置信度：高")).toBeInTheDocument();
     await user.click(within(verifiedGroup!).getByText("宁德时代"));
     expect(within(verifiedGroup!).getByText(/贸易政策变化/)).toBeInTheDocument();
 
@@ -91,6 +106,119 @@ describe("TodayPage", () => {
     renderPage();
 
     expect(await screen.findByText("数据已超过 24 小时")).toBeInTheDocument();
+  });
+});
+
+describe("event catalog pages", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows all clustered events and filters them", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse(fixture)));
+    const user = userEvent.setup();
+    renderPage("/events");
+
+    expect(await screen.findByRole("heading", { name: "全部聚类事件" })).toBeInTheDocument();
+    expect(screen.getByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力")).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText("搜索事件标题、成员新闻或来源"), "动力电池");
+    expect(screen.getByText("动力电池出口保持增长，海外产能与客户结构受关注")).toBeInTheDocument();
+    expect(screen.queryByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力")).not.toBeInTheDocument();
+  });
+
+  it("loads the event catalog in batches of fifty", async () => {
+    const events = Array.from({ length: 51 }, (_, index) => ({
+      ...fixture.all_events[0]!,
+      id: `evt_batch_${index}`,
+      rank: index + 1,
+      title: `批量事件 ${index + 1}`,
+      items: [{ ...fixture.all_events[0]!.items[0]!, headline: `批量事件 ${index + 1}` }],
+    }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse({
+      ...fixture,
+      summary: { ...fixture.summary, total_event_count: 51 },
+      all_events: events,
+    })));
+    const user = userEvent.setup();
+    renderPage("/events");
+
+    expect(await screen.findByText("批量事件 50")).toBeInTheDocument();
+    expect(screen.queryByText("批量事件 51")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /加载更多/ }));
+    expect(screen.getByText("批量事件 51")).toBeInTheDocument();
+  });
+
+  it("starts one event analysis from its detail page", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/radars/latest") return Promise.resolve(apiResponse(fixture));
+      if (init?.method === "POST") {
+        return Promise.resolve(apiResponse({ run_id: fixture.run.id, event_id: fixture.all_events[0]!.id, status: "queued" }, 202));
+      }
+      return Promise.resolve(apiResponse({ error: "analysis_not_found" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderPage(`/events/${fixture.all_events[0]!.id}`);
+
+    expect(await screen.findByRole("heading", { name: "单事件分析报告" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "候选股影响" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/指数不是股价预测/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "生成分析报告" }));
+    expect(await screen.findByText("正在读取公司、财报与行情证据，页面会自动更新。")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/radars/latest/events/${fixture.all_events[0]!.id}/analysis`,
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("renders a completed event analysis and Markdown link", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/radars/latest") return Promise.resolve(apiResponse(fixture));
+      return Promise.resolve(apiResponse({
+        schema_version: "1.0",
+        run_id: fixture.run.id,
+        event_id: fixture.all_events[0]!.id,
+        status: "succeeded",
+        event: fixture.events[0],
+        markdown: "# report",
+      }));
+    }));
+    renderPage(`/events/${fixture.all_events[0]!.id}`);
+
+    const link = await screen.findByRole("link", { name: "查看 Markdown" });
+    expect(link).toHaveAttribute("href", `/api/radars/latest/events/${fixture.all_events[0]!.id}/report`);
+    expect(screen.getByRole("heading", { name: "候选股影响" })).toBeInTheDocument();
+    expect(screen.getByText(/指数不是股价预测/)).toBeInTheDocument();
+    const candidate = screen.getByText("光云科技").closest("details");
+    expect(candidate).not.toBeNull();
+    expect(within(candidate!).getByText("间接影响 / 中强度")).toBeInTheDocument();
+    expect(within(candidate!).getByText("方向：利好")).toBeInTheDocument();
+    expect(within(candidate!).getByText("指数：+45")).toBeInTheDocument();
+    expect(within(candidate!).getByText("置信度：中")).toBeInTheDocument();
+  });
+
+  it("disables analysis for pure stock price updates", async () => {
+    const pureEvent = {
+      ...fixture.all_events[0]!,
+      id: "evt_pure_price_01",
+      title: "中际旭创盘中涨超10%",
+      analysis_status: "not_applicable" as const,
+      exclusion_reason: "pure_stock_price_update" as const,
+    };
+    const pureFixture = {
+      ...fixture,
+      summary: { ...fixture.summary, total_event_count: 1, core_event_count: 0 },
+      events: [],
+      all_events: [pureEvent],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(apiResponse(pureFixture));
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage(`/events/${pureEvent.id}`);
+
+    expect(await screen.findByText("纯行情播报，不进入事件分析")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /分析/ })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

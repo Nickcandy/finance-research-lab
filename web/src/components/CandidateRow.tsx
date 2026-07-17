@@ -1,11 +1,27 @@
 import { ChevronRight, ShieldAlert, Star } from "lucide-react";
-import type { RadarCandidate } from "../types/radar";
+import type { ImpactStrength, RadarCandidate } from "../types/radar";
+import { ImpactBadge } from "./ImpactBadge";
 import { StatusBadge } from "./StatusBadge";
 
 interface CandidateRowProps {
   candidate: RadarCandidate;
   compact?: boolean;
 }
+
+const impactTypeLabels: Record<string, string> = {
+  direct: "直接影响",
+  indirect: "间接影响",
+  sentiment: "情绪映射",
+  negative: "负面影响",
+  false_positive: "误匹配",
+};
+
+const impactStrengthLabels: Record<ImpactStrength, string> = {
+  high: "高强度",
+  medium: "中强度",
+  low: "低强度",
+  unknown: "强度未知",
+};
 
 export function CandidateRow({ candidate, compact = false }: CandidateRowProps) {
   return (
@@ -22,7 +38,12 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink-muted">
             <span className="font-medium tabular-nums">{candidate.symbol}</span>
             <span>·</span>
-            <span>{candidate.impact_type} / {candidate.impact_strength}</span>
+            <span>{impactTypeLabels[candidate.impact_type] ?? candidate.impact_type} / {impactStrengthLabels[candidate.impact_strength]}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <ImpactBadge kind="direction" value={candidate.impact_direction} />
+            <ImpactBadge kind="score" value={candidate.impact_score} />
+            <ImpactBadge kind="confidence" value={candidate.confidence} />
           </div>
         </div>
         <ChevronRight className="mt-2 size-4 shrink-0 text-ink-muted transition group-open:rotate-90" aria-hidden="true" />

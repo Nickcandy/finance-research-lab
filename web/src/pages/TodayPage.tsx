@@ -5,8 +5,10 @@ import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 import { EventCard } from "../components/EventCard";
 import { RadarHeader } from "../components/RadarHeader";
 import { RunAudit } from "../components/RunAudit";
+import { ResearchCandidates } from "../components/ResearchCandidates";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { ValidationTasks } from "../components/ValidationTasks";
+import { WatchlistAlerts } from "../components/WatchlistAlerts";
 import { loadLatestRadar } from "../data/loadLatestRadar";
 
 export function TodayPage() {
@@ -40,6 +42,7 @@ export function TodayPage() {
       )}
 
       <div className="mt-6"><SummaryStrip summary={radar.summary} /></div>
+      <WatchlistAlerts alerts={radar.alerts} />
 
       <div className="mt-7 grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(330px,0.75fr)]">
         <section className="min-w-0" aria-labelledby="events-heading">
@@ -51,6 +54,7 @@ export function TodayPage() {
             <span className="hidden items-center gap-1 text-xs text-ink-muted sm:inline-flex">
               按独立来源与新鲜度排序<ArrowUpRight className="size-3.5" />
             </span>
+            <a href="/events" className="text-xs font-semibold text-brand hover:underline">查看全部 {radar.summary.total_event_count} 个事件</a>
           </div>
           <div className="space-y-4">
             {radar.events.map((event) => <EventCard key={event.id} event={event} />)}
@@ -62,6 +66,7 @@ export function TodayPage() {
             <Newspaper className="size-4 text-brand" aria-hidden="true" />
             <h2 className="text-sm font-semibold">候选研究队列</h2>
           </div>
+          <ResearchCandidates candidates={radar.research_candidates} />
           <CandidateQueue groups={radar.candidate_groups} />
           <ValidationTasks tasks={radar.validation_tasks} />
           <RunAudit steps={radar.run.steps} />

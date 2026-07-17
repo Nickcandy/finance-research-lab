@@ -39,6 +39,8 @@ def _valid_payload() -> dict[str, object]:
                 "market": "A股",
                 "impact_type": "direct",
                 "impact_strength": "high",
+                "impact_direction": "positive",
+                "confidence": "medium",
                 "themes": ["AI", "光模块"],
                 "reasoning": "Watchlist themes match the event",
                 "evidence": ["Watchlist theme match"],
@@ -83,6 +85,8 @@ def test_parse_research_report_accepts_valid_payload() -> None:
     assert report.event.themes == ("AI", "数据中心")
     assert report.stock_impacts[0].symbol == "300308.SZ"
     assert report.stock_impacts[0].verification_status == "verified"
+    assert report.stock_impacts[0].impact_direction == "positive"
+    assert report.stock_impacts[0].confidence == "medium"
     assert report.stock_impacts[0].watchlist_hit is True
     assert report.validation_tasks[0].status == "pending"
 
@@ -110,3 +114,16 @@ def test_parse_research_report_accepts_non_watchlist_symbol_for_later_tool_verif
     report = parse_research_report(payload)
 
     assert report.stock_impacts[0].symbol == "300502.SZ"
+
+
+def test_parse_research_report_converts_legacy_negative_type_to_direction() -> None:
+    payload = _valid_payload()
+    impact = payload["stock_impacts"][0]
+    impact["impact_type"] = "negative"
+    del impact["impact_direction"]
+    del impact["confidence"]
+
+    report = parse_research_report(payload)
+
+    assert report.stock_impacts[0].impact_direction == "negative"
+    assert report.stock_impacts[0].confidence == "unknown"

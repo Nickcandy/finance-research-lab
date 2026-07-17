@@ -3,6 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from .impact_scoring import (
+    format_impact_score,
+    impact_direction_label,
+    stock_impact_score,
+    summarize_event_impact,
+)
 from .models import MarketEvent, ResearchReport, StockImpact
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -92,6 +98,7 @@ def _event_sections(
 - 事件类型：{research[0]}
 - 主题：{research[1]}
 - 产业链：{research[2]}
+- 总体影响：{research[3]}
 - 来源 URL：
 {url_lines}"""
         )
@@ -101,13 +108,18 @@ def _event_sections(
 def _event_research(
     report: ResearchReport | None,
     research_attempted: bool,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     if report is None:
         value = "分析失败，详见 AgentStep" if research_attempted else "待研究"
-        return value, value, value
+        return value, value, value, value
     themes = " / ".join(report.event.themes) or "待判断"
     chain = " -> ".join(report.value_chain.chain_steps) or "待判断"
-    return report.event.event_type, themes, chain
+    impact = summarize_event_impact(report)
+    summary = (
+        f"{impact_direction_label(impact.direction)} / "
+        f"{format_impact_score(impact.score)} / 置信度 {impact.confidence}"
+    )
+    return report.event.event_type, themes, chain, summary
 
 
 def _format_candidates(
@@ -152,7 +164,10 @@ def _candidate_line(
     first = items[0][1]
     event_titles = _unique(report.raw_news.headline for report, _ in items)
     impact_types = _unique(
-        f"{impact.impact_type} / {impact.impact_strength}" for _, impact in items
+        f"{impact_direction_label(impact.impact_direction)} "
+        f"{format_impact_score(stock_impact_score(impact))}（{impact.confidence}） / "
+        f"{impact.impact_type} / {impact.impact_strength}"
+        for _, impact in items
     )
     reasons = _unique(impact.reasoning for _, impact in items if impact.reasoning)
     evidence = _unique(value for _, impact in items for value in impact.evidence if value)
