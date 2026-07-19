@@ -9,6 +9,8 @@ from typing import Any
 
 from .daily_radar_snapshot import SHANGHAI, build_radar_event_payload
 from .models import MarketEvent
+from .llm.chat_completions_client import ChatCompletionsClient
+from .llm.usage import LLMUsageSession, LLMUsageSummary, render_usage_markdown
 from .report import render_research_report
 
 ANALYSIS_SCHEMA_VERSION = "1.0"
@@ -36,13 +38,24 @@ def generate_event_analysis(
 ) -> dict[str, Any]:
     from .workflow import run_market_event_analysis
 
-    outcome = run_market_event_analysis(
-        event,
-        watchlist_path=watchlist_path,
-        a_share_universe_path=a_share_universe_path,
-        evidence_cache_path=evidence_cache_path,
-        market_cache_path=market_cache_path,
-    )
+    usage_session = LLMUsageSession("event_analysis")
+    try:
+        outcome = run_market_event_analysis(
+            event,
+            watchlist_path=watchlist_path,
+            a_share_universe_path=a_share_universe_path,
+            evidence_cache_path=evidence_cache_path,
+            market_cache_path=market_cache_path,
+            llm_client=ChatCompletionsClient(usage_session=usage_session),
+        )
+    except Exception as exc:
+        return write_failed_event_analysis(
+            run_id=run_id,
+            event_id=event_id,
+            error=str(exc),
+            output_path=output_path,
+            usage_summary=usage_session.summary(),
+        )
     return write_successful_event_analysis(
         event,
         outcome.report,
@@ -52,6 +65,7 @@ def generate_event_analysis(
         event_id=event_id,
         rank=rank,
         output_path=output_path,
+        usage_summary=usage_session.summary(),
     )
 
 
@@ -65,6 +79,7 @@ def write_successful_event_analysis(
     event_id: str,
     rank: int,
     output_path: str | Path,
+    usage_summary: LLMUsageSummary | None = None,
 ) -> dict[str, Any]:
     generated_at = datetime.now(SHANGHAI).isoformat(timespec="seconds")
     payload = {
@@ -91,10 +106,17 @@ def write_successful_event_analysis(
         ],
         "warnings": list(warnings),
         "error": "",
-        "markdown": render_research_report(report),
+        "markdown": _analysis_markdown(report, usage_summary),
     }
     write_event_analysis(payload, output_path)
     return payload
+
+
+def _analysis_markdown(report: Any, usage_summary: LLMUsageSummary | None) -> str:
+    markdown = render_research_report(report).rstrip()
+    if usage_summary is None:
+        return f"{markdown}\n"
+    return f"{markdown}\n\n{render_usage_markdown(usage_summary)}\n"
 
 
 def write_failed_event_analysis(
@@ -103,6 +125,7 @@ def write_failed_event_analysis(
     event_id: str,
     error: str,
     output_path: str | Path,
+    usage_summary: LLMUsageSummary | None = None,
 ) -> dict[str, Any]:
     payload = {
         "schema_version": ANALYSIS_SCHEMA_VERSION,
@@ -112,9 +135,9 @@ def write_failed_event_analysis(
         "generated_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
         "event": None,
         "steps": [],
-        "warnings": [],
+        "warnings": list(usage_summary.warnings) if usage_summary else [],
         "error": error,
-        "markdown": "",
+        "markdown": f"{render_usage_markdown(usage_summary)}\n" if usage_summary else "",
     }
     write_event_analysis(payload, output_path)
     return payload

@@ -20,6 +20,7 @@ venv/
 /data/baostock_cache/
 /data/company_profile_cache/
 /data/event_cache/
+/data/agent_runs.sqlite3*
 /reports/*.md
 /reports/*.json
 /reports/event-catalogs/

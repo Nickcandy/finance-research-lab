@@ -36,6 +36,8 @@ def plan_research_tasks(
     base_url: str | None = None,
     urlopen: UrlOpen | None = None,
     env_path: str | Path = ".env",
+    client: ChatCompletionsClient | None = None,
+    scope_id: str = "",
 ) -> tuple[ResearchTask, ...]:
     try:
         tasks = analyze_research_tasks_with_agent(
@@ -46,6 +48,8 @@ def plan_research_tasks(
             base_url=base_url,
             urlopen=urlopen,
             env_path=env_path,
+            client=client,
+            scope_id=scope_id,
         )
     except Exception:
         return fallback_research_tasks(news, watchlist)
@@ -63,6 +67,8 @@ def analyze_research_tasks_with_agent(
     base_url: str | None = None,
     urlopen: UrlOpen | None = None,
     env_path: str | Path = ".env",
+    client: ChatCompletionsClient | None = None,
+    scope_id: str = "",
 ) -> tuple[ResearchTask, ...]:
     client_kwargs: dict[str, Any] = {
         "api_key": api_key,
@@ -73,11 +79,12 @@ def analyze_research_tasks_with_agent(
     if urlopen is not None:
         client_kwargs["urlopen"] = urlopen
 
-    client = ChatCompletionsClient(**client_kwargs)
-    response = client.structured_completion(
+    llm_client = client or ChatCompletionsClient(**client_kwargs)
+    response = llm_client.structured_completion(
         messages=_build_messages(news, watchlist),
         schema_name="research_tasks",
         schema=research_tasks_json_schema(),
+        scope_id=scope_id,
     )
     try:
         data = json.loads(response.content)

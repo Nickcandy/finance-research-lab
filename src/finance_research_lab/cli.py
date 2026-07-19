@@ -9,6 +9,8 @@ from .a_share_universe import sync_a_share_universe_from_akshare
 from .baostock_market import BaoStockMarketProvider
 from .company_profiles import sync_company_profiles
 from .market_evidence import FallbackMarketProvider
+from .llm.chat_completions_client import ChatCompletionsClient
+from .llm.usage import LLMUsageSession, format_usage_line
 from .web_api import AnalysisConfig, serve
 from .workflow import (
     run_daily_radar_workflow,
@@ -19,14 +21,17 @@ from .workflow import (
 
 
 def trace_news(args: argparse.Namespace) -> int:
+    llm_client = _create_llm_client("trace_news")
     run = run_news_trace_workflow(
         url=args.url,
         watchlist_path=args.watchlist,
         output_path=args.output,
         a_share_universe_path=args.a_share_universe,
+        llm_client=llm_client,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
+    _print_llm_usage(llm_client)
     if not run.steps or run.steps[-1].status == "error":
         return 1
     print(f"wrote {run.output_path}")
@@ -34,14 +39,17 @@ def trace_news(args: argparse.Namespace) -> int:
 
 
 def radar_cmd(args: argparse.Namespace) -> int:
+    llm_client = _create_llm_client("radar")
     run = run_radar_workflow(
         urls=args.urls,
         watchlist_path=args.watchlist,
         output_path=args.output,
         a_share_universe_path=args.a_share_universe,
+        llm_client=llm_client,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
+    _print_llm_usage(llm_client)
     if not run.steps or run.steps[-1].status == "error":
         return 1
     print(f"wrote {run.output_path}")
@@ -49,6 +57,7 @@ def radar_cmd(args: argparse.Namespace) -> int:
 
 
 def daily_radar_cmd(args: argparse.Namespace) -> int:
+    llm_client = _create_llm_client("daily_radar")
     run = run_daily_radar_workflow(
         output_path=args.output,
         event_cache_path=args.event_cache,
@@ -58,9 +67,11 @@ def daily_radar_cmd(args: argparse.Namespace) -> int:
         market_cache_path=args.market_cache,
         refresh_evidence=args.refresh_evidence,
         json_output_path=args.json_output,
+        llm_client=llm_client,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
+    _print_llm_usage(llm_client)
     if not run.steps or run.steps[-1].status == "error":
         return 1
     print(f"wrote {run.output_path}")
@@ -69,6 +80,7 @@ def daily_radar_cmd(args: argparse.Namespace) -> int:
 
 
 def research_agent_cmd(args: argparse.Namespace) -> int:
+    llm_client = _create_llm_client("research_agent")
     run = run_research_agent_workflow(
         url=args.url,
         watchlist_path=args.watchlist,
@@ -77,9 +89,11 @@ def research_agent_cmd(args: argparse.Namespace) -> int:
         evidence_cache_path=args.evidence_cache,
         market_cache_path=args.market_cache,
         refresh_evidence=args.refresh_evidence,
+        llm_client=llm_client,
     )
     for step in run.steps:
         print(f"[{step.status}] {step.step_name} via {step.tool_name}: {step.summary}")
+    _print_llm_usage(llm_client)
     if not run.steps or run.steps[-1].status == "error":
         return 1
     print(f"wrote {run.output_path}")
@@ -99,6 +113,15 @@ def serve_cmd(args: argparse.Namespace) -> int:
         ),
     )
     return 0
+
+
+def _create_llm_client(entrypoint: str) -> ChatCompletionsClient:
+    return ChatCompletionsClient(usage_session=LLMUsageSession(entrypoint))
+
+
+def _print_llm_usage(client: ChatCompletionsClient) -> None:
+    assert client.usage_session is not None
+    print(format_usage_line(client.usage_session.summary()))
 
 
 def sync_a_share_universe_cmd(args: argparse.Namespace) -> int:

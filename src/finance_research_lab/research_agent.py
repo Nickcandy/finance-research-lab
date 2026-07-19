@@ -20,6 +20,8 @@ def analyze_research_report_with_agent(
     urlopen: UrlOpen | None = None,
     env_path: str | Path = ".env",
     evidence_context: list[dict[str, Any]] | None = None,
+    client: ChatCompletionsClient | None = None,
+    scope_id: str = "",
 ) -> ResearchReport:
     client_kwargs: dict[str, Any] = {
         "api_key": api_key,
@@ -30,11 +32,12 @@ def analyze_research_report_with_agent(
     if urlopen is not None:
         client_kwargs["urlopen"] = urlopen
 
-    client = ChatCompletionsClient(**client_kwargs)
-    response = client.structured_completion(
+    llm_client = client or ChatCompletionsClient(**client_kwargs)
+    response = llm_client.structured_completion(
         messages=_build_messages(news, watchlist, evidence_context),
         schema_name="research_report",
         schema=research_report_json_schema(),
+        scope_id=scope_id,
     )
     try:
         data = json.loads(response.content)

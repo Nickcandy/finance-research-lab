@@ -30,6 +30,8 @@ def run_evidence_tool_calls(
     registry: ToolRegistry,
     news: NewsItem,
     report: ResearchReport,
+    *,
+    scope_id: str = "",
 ) -> ToolCallingOutcome:
     candidates = {impact.symbol for impact in report.stock_impacts if impact.market == "A股"}
     messages: list[dict[str, Any]] = [
@@ -58,7 +60,7 @@ def run_evidence_tool_calls(
     tools = [tool for tool in registry.to_openai_tools() if tool["function"]["name"] in EVIDENCE_TOOL_NAMES]
 
     for _ in range(MAX_TOOL_ROUNDS):
-        response = client.tool_completion(messages=messages, tools=tools)
+        response = client.tool_completion(messages=messages, tools=tools, scope_id=scope_id)
         calls = response.raw.get("tool_calls", []) if isinstance(response.raw, dict) else []
         if not calls:
             break

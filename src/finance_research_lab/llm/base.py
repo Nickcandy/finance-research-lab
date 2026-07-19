@@ -14,8 +14,10 @@ class LLMResponse:
 
     content: str
     model: str
-    input_tokens: int = 0
-    output_tokens: int = 0
+    input_tokens: int | None = 0
+    output_tokens: int | None = 0
+    cache_hit_input_tokens: int | None = None
+    cache_miss_input_tokens: int | None = None
     raw: Any = None
 
 

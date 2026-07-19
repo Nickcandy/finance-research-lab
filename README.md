@@ -119,6 +119,7 @@ LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_RESPONSE_FORMAT=json_schema
 LLM_TIMEOUT_SECONDS=60
+LLM_USAGE_STORE=data/agent_runs.sqlite3
 ```
 
 `trace-news` 会优先尝试用兼容 OpenAI Chat Completions 的 Structured Outputs 生成严格的 `ResearchReport`。如果没有配置 key、LLM 请求失败、模型拒答、返回 JSON 解析失败或 schema 校验失败，会自动回退到本地规则 fallback，仍然生成 Markdown 报告。
@@ -129,6 +130,10 @@ LLM_TIMEOUT_SECONDS=60
 
 - `json_schema`：默认值，用于支持 OpenAI JSON Schema Structured Outputs 的服务。
 - `json_object`：用于 DeepSeek 这类支持 JSON Output 但不支持 OpenAI `json_schema` 请求格式的服务。
+
+所有 CLI 与网页按需分析发出的真实 LLM 请求都会写入 `LLM_USAGE_STORE`。CLI 和生成的
+Markdown 报告会显示本次运行与上海自然日累计的 token 和已计价费用。当前阶段只记录、不阻止请求；
+无法识别单价的模型仍可运行，但会标记为“费用不完整”。账本不保存 Prompt、模型输出或 API Key。
 
 DeepSeek 示例：
 

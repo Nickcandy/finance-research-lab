@@ -8,6 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .base import LLMResponse
+from .usage import LLMUsageSession
 
 UrlOpen = Callable[[Request, int], Any]
 
@@ -35,6 +36,7 @@ class ChatCompletionsClient:
         timeout_seconds: int | None = None,
         urlopen: UrlOpen = _default_urlopen,
         env_path: str | Path = ".env",
+        usage_session: LLMUsageSession | None = None,
     ) -> None:
         self.api_key = api_key or _config_value("LLM_API_KEY", env_path)
         self.model = model or _config_value("LLM_MODEL", env_path) or DEFAULT_LLM_MODEL
@@ -54,6 +56,7 @@ class ChatCompletionsClient:
             DEFAULT_LLM_TIMEOUT_SECONDS,
         )
         self.urlopen = urlopen
+        self.usage_session = usage_session
 
     def structured_completion(
         self,
@@ -63,6 +66,7 @@ class ChatCompletionsClient:
         schema: dict[str, Any],
         temperature: float = 0.2,
         timeout: int | None = None,
+        scope_id: str = "",
     ) -> LLMResponse:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is not set")
@@ -87,25 +91,55 @@ class ChatCompletionsClient:
             with self.urlopen(request, timeout or self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
+            self._record_failure(schema_name, scope_id, "transport_error")
             raise RuntimeError(f"LLM request failed: {exc}") from exc
 
-        message = payload.get("choices", [{}])[0].get("message", {})
+        usage_tokens = _usage(payload)
+        try:
+            message = _response_message(payload)
+        except RuntimeError as exc:
+            self._record_failure(
+                schema_name,
+                scope_id,
+                "invalid_response",
+                model=_response_model(payload, self.model),
+                usage_tokens=usage_tokens,
+            )
+            raise RuntimeError(f"LLM response was invalid: {exc}") from exc
+        input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens = usage_tokens
         refusal = message.get("refusal")
         if refusal:
+            self._record_failure(
+                schema_name,
+                scope_id,
+                "provider_refusal",
+                model=_response_model(payload, self.model),
+                usage_tokens=usage_tokens,
+            )
             raise RuntimeError(f"LLM refused structured response: {refusal}")
 
         content = message.get("content")
         if not isinstance(content, str):
+            self._record_failure(
+                schema_name,
+                scope_id,
+                "invalid_response",
+                model=_response_model(payload, self.model),
+                usage_tokens=usage_tokens,
+            )
             raise RuntimeError("LLM response did not include text content")
 
-        usage = payload.get("usage", {})
-        return LLMResponse(
+        result = LLMResponse(
             content=content,
             model=str(payload.get("model", self.model)),
-            input_tokens=int(usage.get("prompt_tokens", 0)),
-            output_tokens=int(usage.get("completion_tokens", 0)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_hit_input_tokens=cache_hit_tokens,
+            cache_miss_input_tokens=cache_miss_tokens,
             raw=payload,
         )
+        self._record_success(schema_name, scope_id, result)
+        return result
 
     def tool_completion(
         self,
@@ -114,6 +148,7 @@ class ChatCompletionsClient:
         tools: list[dict[str, Any]],
         temperature: float = 0.2,
         timeout: int | None = None,
+        scope_id: str = "",
     ) -> LLMResponse:
         """Request one OpenAI-compatible tool-calling turn."""
 
@@ -136,19 +171,85 @@ class ChatCompletionsClient:
             with self.urlopen(request, timeout or self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
+            self._record_failure("evidence_tools", scope_id, "transport_error")
             raise RuntimeError(f"LLM tool request failed: {exc}") from exc
-        message = payload.get("choices", [{}])[0].get("message", {})
+        usage_tokens = _usage(payload)
+        try:
+            message = _response_message(payload)
+        except RuntimeError as exc:
+            self._record_failure(
+                "evidence_tools",
+                scope_id,
+                "invalid_response",
+                model=_response_model(payload, self.model),
+                usage_tokens=usage_tokens,
+            )
+            raise RuntimeError(f"LLM tool response was invalid: {exc}") from exc
         if message.get("refusal"):
+            self._record_failure(
+                "evidence_tools",
+                scope_id,
+                "provider_refusal",
+                model=_response_model(payload, self.model),
+                usage_tokens=usage_tokens,
+            )
             raise RuntimeError(f"LLM refused tool response: {message['refusal']}")
-        if not isinstance(message, dict):
-            raise RuntimeError("LLM tool response did not include a message")
-        usage = payload.get("usage", {})
-        return LLMResponse(
+        input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens = usage_tokens
+        result = LLMResponse(
             content=message.get("content") if isinstance(message.get("content"), str) else "",
             model=str(payload.get("model", self.model)),
-            input_tokens=int(usage.get("prompt_tokens", 0)),
-            output_tokens=int(usage.get("completion_tokens", 0)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_hit_input_tokens=cache_hit_tokens,
+            cache_miss_input_tokens=cache_miss_tokens,
             raw=message,
+        )
+        self._record_success("evidence_tools", scope_id, result)
+        return result
+
+    def _record_success(
+        self,
+        operation: str,
+        scope_id: str,
+        response: LLMResponse,
+    ) -> None:
+        if self.usage_session is None:
+            return
+        self.usage_session.record_success(
+            operation=operation,
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cache_hit_input_tokens=response.cache_hit_input_tokens,
+            cache_miss_input_tokens=response.cache_miss_input_tokens,
+            scope_id=scope_id,
+        )
+
+    def _record_failure(
+        self,
+        operation: str,
+        scope_id: str,
+        category: str,
+        *,
+        model: str | None = None,
+        usage_tokens: tuple[int | None, int | None, int | None, int | None] = (
+            None,
+            None,
+            None,
+            None,
+        ),
+    ) -> None:
+        if self.usage_session is None:
+            return
+        self.usage_session.record_failure(
+            operation=operation,
+            model=model or self.model,
+            failure_category=category,
+            scope_id=scope_id,
+            input_tokens=usage_tokens[0],
+            output_tokens=usage_tokens[1],
+            cache_hit_input_tokens=usage_tokens[2],
+            cache_miss_input_tokens=usage_tokens[3],
         )
 
     def _messages(
@@ -188,6 +289,48 @@ def _config_value(key: str, env_path: str | Path) -> str:
     if value:
         return value
     return _read_dotenv(env_path).get(key, "")
+
+
+def _optional_usage_int(usage: object, key: str) -> int | None:
+    if not isinstance(usage, dict) or key not in usage:
+        return None
+    value = usage[key]
+    if not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _response_message(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise RuntimeError("response must be a JSON object")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise RuntimeError("response did not include a choice")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("response did not include a message")
+    return message
+
+
+def _usage(payload: object) -> tuple[int | None, int | None, int | None, int | None]:
+    if not isinstance(payload, dict):
+        return None, None, None, None
+    usage = payload.get("usage", {})
+    return (
+        _optional_usage_int(usage, "prompt_tokens"),
+        _optional_usage_int(usage, "completion_tokens"),
+        _optional_usage_int(usage, "prompt_cache_hit_tokens"),
+        _optional_usage_int(usage, "prompt_cache_miss_tokens"),
+    )
+
+
+def _response_model(payload: object, default: str) -> str:
+    if not isinstance(payload, dict):
+        return default
+    return str(payload.get("model", default))
 
 
 def _int_config_value(key: str, env_path: str | Path, default: int) -> int:

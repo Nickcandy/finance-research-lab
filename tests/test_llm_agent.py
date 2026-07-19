@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from urllib.error import URLError
 from urllib.error import HTTPError
 
 import pytest
 
 from finance_research_lab.agent_models import ToolResult
 from finance_research_lab.llm.chat_completions_client import ChatCompletionsClient
+from finance_research_lab.llm.usage import LLMUsageSession
 from finance_research_lab.models import NewsItem, WatchlistItem
 from finance_research_lab.news_trace import build_research_report
 from finance_research_lab.research_agent import analyze_research_report_with_agent
@@ -192,6 +195,156 @@ def test_chat_completions_client_supports_deepseek_json_object_mode(tmp_path) ->
     assert "required" in body["messages"][-1]["content"]
 
 
+def test_chat_completions_client_records_structured_usage(tmp_path) -> None:
+    usage = _UsageRecorder()
+
+    def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        del request, timeout
+        payload = _llm_payload(json.dumps(_report_payload()))
+        payload["model"] = "deepseek-v4-pro"
+        payload["usage"] = {
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "prompt_cache_hit_tokens": 4,
+            "prompt_cache_miss_tokens": 6,
+        }
+        return FakeHTTPResponse(payload)
+
+    client = ChatCompletionsClient(
+        api_key="test-key",
+        model="deepseek-v4-pro",
+        env_path=tmp_path / "missing.env",
+        urlopen=fake_urlopen,
+        usage_session=usage,
+    )
+
+    response = client.structured_completion(
+        messages=[{"role": "user", "content": "{}"}],
+        schema_name="research_report",
+        schema={"type": "object"},
+        scope_id="event-1",
+    )
+
+    assert response.cache_hit_input_tokens == 4
+    assert response.cache_miss_input_tokens == 6
+    assert usage.successes == [
+        {
+            "operation": "research_report",
+            "model": "deepseek-v4-pro",
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_hit_input_tokens": 4,
+            "cache_miss_input_tokens": 6,
+            "scope_id": "event-1",
+        }
+    ]
+
+
+def test_chat_completions_client_records_sent_request_failure(tmp_path) -> None:
+    usage = _UsageRecorder()
+
+    def failing_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        del request, timeout
+        raise URLError("network down")
+
+    client = ChatCompletionsClient(
+        api_key="test-key",
+        model="deepseek-v4-pro",
+        env_path=tmp_path / "missing.env",
+        urlopen=failing_urlopen,
+        usage_session=usage,
+    )
+
+    with pytest.raises(RuntimeError, match="LLM request failed"):
+        client.structured_completion(
+            messages=[{"role": "user", "content": "{}"}],
+            schema_name="research_report",
+            schema={"type": "object"},
+            scope_id="event-1",
+        )
+
+    assert usage.failures[0]["operation"] == "research_report"
+    assert usage.failures[0]["scope_id"] == "event-1"
+
+
+def test_chat_completions_client_records_invalid_response_without_model_text(tmp_path) -> None:
+    usage = _UsageRecorder()
+
+    def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        del request, timeout
+        return FakeHTTPResponse({"model": "deepseek-v4-pro", "choices": []})
+
+    client = ChatCompletionsClient(
+        api_key="test-key",
+        model="deepseek-v4-pro",
+        env_path=tmp_path / "missing.env",
+        urlopen=fake_urlopen,
+        usage_session=usage,
+    )
+
+    with pytest.raises(RuntimeError, match="response was invalid"):
+        client.structured_completion(
+            messages=[{"role": "user", "content": "{}"}],
+            schema_name="research_report",
+            schema={"type": "object"},
+        )
+
+    assert usage.failures == [
+        {
+            "operation": "research_report",
+            "model": "deepseek-v4-pro",
+            "failure_category": "invalid_response",
+            "scope_id": "",
+            "input_tokens": None,
+            "output_tokens": None,
+            "cache_hit_input_tokens": None,
+            "cache_miss_input_tokens": None,
+        }
+    ]
+
+
+def test_chat_completions_client_prices_refusal_usage_without_storing_text(tmp_path) -> None:
+    store = tmp_path / "usage.sqlite3"
+    usage = LLMUsageSession("daily_radar", store_path=store, run_id="run-1")
+
+    def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        del request, timeout
+        return FakeHTTPResponse(
+            {
+                "model": "deepseek-v4-pro",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+                "choices": [
+                    {"message": {"role": "assistant", "content": None, "refusal": "private text"}}
+                ],
+            }
+        )
+
+    client = ChatCompletionsClient(
+        api_key="test-key",
+        model="deepseek-v4-pro",
+        env_path=tmp_path / "missing.env",
+        urlopen=fake_urlopen,
+        usage_session=usage,
+    )
+
+    with pytest.raises(RuntimeError, match="private text"):
+        client.structured_completion(
+            messages=[{"role": "user", "content": "{}"}],
+            schema_name="research_report",
+            schema={"type": "object"},
+        )
+
+    summary = usage.summary()
+    assert summary.run_failed_calls == 1
+    assert summary.run_unpriced_calls == 0
+    assert summary.run_input_tokens == 10
+    with sqlite3.connect(store) as connection:
+        category = connection.execute(
+            "SELECT failure_category FROM llm_calls"
+        ).fetchone()[0]
+    assert category == "provider_refusal"
+
+
 def test_chat_completions_client_reads_timeout_config(tmp_path) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
@@ -207,6 +360,7 @@ def test_chat_completions_client_reads_timeout_config(tmp_path) -> None:
 
 def test_chat_completions_client_sends_and_parses_tool_calls(tmp_path) -> None:
     requests: list[object] = []
+    usage = _UsageRecorder()
 
     def fake_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
         requests.append(request)
@@ -235,10 +389,16 @@ def test_chat_completions_client_sends_and_parses_tool_calls(tmp_path) -> None:
             }
         )
 
-    client = ChatCompletionsClient(api_key="test-key", env_path=tmp_path / "missing.env", urlopen=fake_urlopen)
+    client = ChatCompletionsClient(
+        api_key="test-key",
+        env_path=tmp_path / "missing.env",
+        urlopen=fake_urlopen,
+        usage_session=usage,
+    )
     response = client.tool_completion(
         messages=[{"role": "user", "content": "查证据"}],
         tools=[{"type": "function", "function": {"name": "fetch_market_snapshot", "parameters": {}}}],
+        scope_id="event-1",
     )
 
     body = json.loads(requests[0].data.decode("utf-8"))
@@ -246,6 +406,20 @@ def test_chat_completions_client_sends_and_parses_tool_calls(tmp_path) -> None:
     assert body["tools"][0]["function"]["name"] == "fetch_market_snapshot"
     assert response.content == ""
     assert response.raw["tool_calls"][0]["function"]["name"] == "fetch_market_snapshot"
+    assert usage.successes[0]["operation"] == "evidence_tools"
+    assert usage.successes[0]["scope_id"] == "event-1"
+
+
+class _UsageRecorder:
+    def __init__(self) -> None:
+        self.successes = []
+        self.failures = []
+
+    def record_success(self, **kwargs) -> None:
+        self.successes.append(kwargs)
+
+    def record_failure(self, **kwargs) -> None:
+        self.failures.append(kwargs)
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,11 @@ from finance_research_lab.agent_models import AgentRun, AgentStep
 from finance_research_lab.cli import build_parser
 
 
+@pytest.fixture(autouse=True)
+def isolate_llm_usage_store(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_USAGE_STORE", str(tmp_path / "usage.sqlite3"))
+
+
 def test_trace_news_cli_requires_url() -> None:
     parser = build_parser()
 
@@ -30,7 +35,13 @@ def test_trace_news_cli_forwards_only_trace_arguments(monkeypatch) -> None:
     monkeypatch.setattr(cli, "run_news_trace_workflow", fake_run)
 
     assert cli.main(["trace-news", "--url", "https://news.example.com/article"]) == 0
-    assert set(captured) == {"url", "watchlist_path", "output_path", "a_share_universe_path"}
+    assert set(captured) == {
+        "url",
+        "watchlist_path",
+        "output_path",
+        "a_share_universe_path",
+        "llm_client",
+    }
 
 
 def test_radar_cli_accepts_multiple_urls_with_defaults() -> None:
@@ -85,8 +96,21 @@ def test_daily_radar_cli_forwards_options_and_prints_output(monkeypatch, tmp_pat
         "evidence_cache_path": "data/akshare_cache",
         "market_cache_path": "data/baostock_cache",
         "refresh_evidence": False,
+        "llm_client": captured["llm_client"],
     }
     assert f"wrote {output}" in capsys.readouterr().out
+
+
+def test_daily_radar_cli_prints_llm_usage(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "run_daily_radar_workflow",
+        lambda **kwargs: _successful_run("daily_radar", kwargs["output_path"]),
+    )
+
+    assert cli.main(["daily-radar"]) == 0
+
+    assert "LLM 使用：本次 0 次" in capsys.readouterr().out
 
 
 def test_daily_radar_cli_returns_error_for_failed_run(monkeypatch, capsys) -> None:

@@ -8,7 +8,11 @@ from typing import Any
 from .akshare_evidence import AkShareEvidenceProvider
 from .baostock_market import BaoStockMarketProvider
 from .daily_radar_report import render_daily_event_radar
-from .daily_radar_snapshot import build_daily_radar_snapshot, write_daily_radar_snapshot
+from .daily_radar_snapshot import (
+    build_daily_radar_snapshot,
+    market_event_id,
+    write_daily_radar_snapshot,
+)
 from .event_clustering import cluster_market_events, rank_hot_events
 from .event_eligibility import is_market_event_researchable
 from .event_catalog import event_catalog_path, write_event_catalog
@@ -16,6 +20,7 @@ from .event_analysis import event_analysis_path, write_successful_event_analysis
 from .event_sources import SHANGHAI, ThsNewsSource
 from .evidence_tool_agent import run_evidence_tool_calls
 from .llm.chat_completions_client import ChatCompletionsClient
+from .llm.usage import render_usage_markdown
 from .market_evidence import FallbackMarketProvider, MarketEvidenceProvider
 from .agent_report import render_research_agent_report
 from .agent_models import AgentRun, AgentStep, ToolResult
@@ -98,6 +103,8 @@ def run_news_trace_workflow(
     watchlist_path: str | Path,
     output_path: str | Path,
     a_share_universe_path: str | Path = DEFAULT_A_SHARE_UNIVERSE_PATH,
+    *,
+    llm_client: ChatCompletionsClient | None = None,
 ) -> AgentRun:
     """Run the deterministic v0 Agent workflow for one news trace.
 
@@ -128,12 +135,18 @@ def run_news_trace_workflow(
         fetch_result.output,
         watchlist_result.output,
         universe_result.output,
+        **({"client": llm_client} if llm_client is not None else {}),
     )
     steps.append(_step("trace_news", trace_result))
     if trace_result.status == "error":
         return AgentRun("news_trace", steps, str(output_path))
 
     render_result = render_report_tool(trace_result.output)
+    if render_result.status == "success":
+        render_result = replace(
+            render_result,
+            output=_append_llm_usage(render_result.output, llm_client),
+        )
     steps.append(_step("render_report", render_result))
     if render_result.status == "error":
         return AgentRun("news_trace", steps, str(output_path))
@@ -149,6 +162,8 @@ def run_radar_workflow(
     watchlist_path: str | Path,
     output_path: str | Path,
     a_share_universe_path: str | Path = DEFAULT_A_SHARE_UNIVERSE_PATH,
+    *,
+    llm_client: ChatCompletionsClient | None = None,
 ) -> AgentRun:
     """Run the deterministic radar workflow for multiple news URLs."""
 
@@ -175,6 +190,7 @@ def run_radar_workflow(
             fetch_result.output,
             watchlist_result.output,
             universe_result.output,
+            **({"client": llm_client} if llm_client is not None else {}),
         )
         steps.append(_step("trace_news", trace_result))
         if trace_result.status == "error":
@@ -189,7 +205,11 @@ def run_radar_workflow(
     except Exception as exc:  # pragma: no cover - defensive boundary for CLI usage
         render_result = ToolResult("render_opportunity_radar", "error", "", str(exc))
     else:
-        render_result = ToolResult("render_opportunity_radar", "success", markdown)
+        render_result = ToolResult(
+            "render_opportunity_radar",
+            "success",
+            _append_llm_usage(markdown, llm_client),
+        )
     steps.append(_step("render_radar_report", render_result))
     if render_result.status == "error":
         return AgentRun("radar", steps, str(output_path))
@@ -211,6 +231,7 @@ def run_daily_radar_workflow(
     market_cache_path: str | Path = "data/baostock_cache",
     refresh_evidence: bool = False,
     json_output_path: str | Path | None = None,
+    llm_client: ChatCompletionsClient | None = None,
 ) -> AgentRun:
     """Discover, cluster, rank, and render the latest 24-hour market events."""
 
@@ -288,6 +309,8 @@ def run_daily_radar_workflow(
             initial_results=daily_tool_results,
             attempted_tools=daily_attempted_tools,
             step_suffix=f":{index}",
+            llm_client=llm_client,
+            scope_id=market_event_id(event),
         )
         steps.extend(event_steps)
         if report is None:
@@ -308,7 +331,11 @@ def run_daily_radar_workflow(
     except Exception as exc:
         render_result = ToolResult("render_daily_event_radar", "error", "", str(exc))
     else:
-        render_result = ToolResult("render_daily_event_radar", "success", markdown)
+        render_result = ToolResult(
+            "render_daily_event_radar",
+            "success",
+            _append_llm_usage(markdown, llm_client),
+        )
     steps.append(_step("render_daily_radar", render_result))
     if render_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
@@ -403,6 +430,7 @@ def run_market_event_analysis(
     a_share_universe_path: str | Path = "data/a_share_universe.csv",
     evidence_cache_path: str | Path = "data/akshare_cache",
     market_cache_path: str | Path = "data/baostock_cache",
+    llm_client: ChatCompletionsClient | None = None,
 ) -> MarketEventAnalysisOutcome:
     """Run the daily-radar research pipeline for one persisted market event."""
 
@@ -422,6 +450,8 @@ def run_market_event_analysis(
         watchlist_result.output,
         universe_result.output,
         _research_tool_registry(company_provider, market_provider),
+        llm_client=llm_client,
+        scope_id=market_event_id(event),
     )
     if report is None:
         message = steps[-1].summary if steps else "market event analysis failed"
@@ -438,6 +468,8 @@ def _analyze_market_event(
     initial_results: tuple[ToolResult, ...] = (),
     attempted_tools: dict[str, frozenset[str]] | None = None,
     step_suffix: str = "",
+    llm_client: ChatCompletionsClient | None = None,
+    scope_id: str = "",
 ) -> tuple[
     ResearchReport | None,
     tuple[ToolResult, ...],
@@ -446,7 +478,16 @@ def _analyze_market_event(
 ]:
     steps: list[AgentStep] = []
     attempts = attempted_tools if attempted_tools is not None else {}
-    trace_result = trace_news_tool(_market_event_news(event), watchlist, universe)
+    trace_result = trace_news_tool(
+        _market_event_news(event),
+        watchlist,
+        universe,
+        **(
+            {"client": llm_client, "scope_id": scope_id}
+            if llm_client is not None
+            else {}
+        ),
+    )
     steps.append(_step(f"analyze_event{step_suffix}", trace_result))
     if trace_result.status == "error":
         return None, initial_results, steps, [trace_result.error]
@@ -528,6 +569,8 @@ def run_research_agent_workflow(
     evidence_cache_path: str | Path = "data/akshare_cache",
     market_cache_path: str | Path = "data/baostock_cache",
     refresh_evidence: bool = False,
+    *,
+    llm_client: ChatCompletionsClient | None = None,
 ) -> AgentRun:
     """Run the minimal code-controlled AI research Agent workflow."""
 
@@ -558,18 +601,22 @@ def run_research_agent_workflow(
     classify_result = ToolResult("classify_event", "success", classification)
     steps.append(_step("classify_event", classify_result))
 
-    tasks = plan_research_tasks(fetch_result.output, watchlist_result.output)
+    tasks = plan_research_tasks(
+        fetch_result.output,
+        watchlist_result.output,
+        client=llm_client,
+    )
     plan_result = ToolResult("plan_research_tasks", "success", tasks)
     steps.append(_step("plan_research_tasks", plan_result))
 
-    trace_result = registry.execute(
-        "trace_news",
-        {
-            "news": fetch_result.output,
-            "watchlist": watchlist_result.output,
-            "a_share_universe": universe_result.output,
-        },
-    )
+    trace_arguments = {
+        "news": fetch_result.output,
+        "watchlist": watchlist_result.output,
+        "a_share_universe": universe_result.output,
+    }
+    if llm_client is not None:
+        trace_arguments["client"] = llm_client
+    trace_result = registry.execute("trace_news", trace_arguments)
     steps.append(_step("trace_news", trace_result))
     if trace_result.status == "error":
         return AgentRun("research_agent", steps, str(output_path))
@@ -586,7 +633,10 @@ def run_research_agent_workflow(
         if trace_result.error:
             raise RuntimeError(trace_result.error)
         outcome = run_evidence_tool_calls(
-            ChatCompletionsClient(), registry, fetch_result.output, trace_result.output
+            llm_client or ChatCompletionsClient(),
+            registry,
+            fetch_result.output,
+            trace_result.output,
         )
         tool_result = ToolResult("plan_evidence_tool_calls", "success", outcome.results)
         steps.append(_step("plan_evidence_tool_calls", tool_result))
@@ -624,6 +674,7 @@ def run_research_agent_workflow(
                 fetch_result.output,
                 watchlist_result.output,
                 evidence_context=[_tool_context(result) for result in tool_results],
+                client=llm_client,
             )
         except Exception as exc:
             evidence_warnings.append(f"evidence synthesis fallback：{exc}")
@@ -672,7 +723,10 @@ def run_research_agent_workflow(
         value_chain_scores=value_chain_scores,
         evidence_warnings=tuple(evidence_warnings),
     )
-    markdown = render_research_agent_report(result, steps)
+    markdown = _append_llm_usage(
+        render_research_agent_report(result, steps),
+        llm_client,
+    )
     render_result = ToolResult("render_research_agent_report", "success", markdown)
     steps.append(_step("render_agent_report", render_result))
 
@@ -680,6 +734,15 @@ def run_research_agent_workflow(
     steps.append(_step("write_report", write_result))
 
     return AgentRun("research_agent", steps, str(output_path))
+
+
+def _append_llm_usage(
+    markdown: str,
+    client: ChatCompletionsClient | None,
+) -> str:
+    if client is None or client.usage_session is None:
+        return markdown
+    return f"{markdown.rstrip()}\n\n{render_usage_markdown(client.usage_session.summary())}\n"
 
 
 def _evidence_outputs(

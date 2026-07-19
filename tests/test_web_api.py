@@ -12,7 +12,7 @@ import pytest
 
 from finance_research_lab.web_api import create_server
 from finance_research_lab.daily_radar_snapshot import build_daily_radar_snapshot, write_daily_radar_snapshot
-from finance_research_lab.event_analysis import write_event_analysis
+from finance_research_lab.event_analysis import generate_event_analysis, write_event_analysis
 from finance_research_lab.event_catalog import event_catalog_path, write_event_catalog
 from finance_research_lab.event_sources import SHANGHAI
 from finance_research_lab.models import MarketEvent, NewsItem
@@ -163,6 +163,33 @@ def test_event_analysis_persists_failure_and_allows_retry(tmp_path, monkeypatch)
 
     assert failed["status"] == "failed"
     assert failed["error"] == "provider unavailable"
+
+
+def test_generated_failed_event_analysis_keeps_usage_markdown(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LLM_USAGE_STORE", str(tmp_path / "usage.sqlite3"))
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.run_market_event_analysis",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("analysis failed")),
+    )
+    event = MarketEvent("AI 事件", (NewsItem("AI 事件", "同花顺"),))
+
+    payload = generate_event_analysis(
+        event,
+        run_id="run-1",
+        event_id="event-1",
+        rank=1,
+        output_path=tmp_path / "analysis.json",
+        watchlist_path=tmp_path / "watchlist.csv",
+        a_share_universe_path=tmp_path / "universe.csv",
+        evidence_cache_path=tmp_path / "evidence",
+        market_cache_path=tmp_path / "market",
+    )
+
+    assert payload["status"] == "failed"
+    assert "## LLM 使用与费用" in payload["markdown"]
 
 
 def test_event_analysis_rejects_a_second_concurrent_event(tmp_path, monkeypatch) -> None:

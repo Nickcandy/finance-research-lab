@@ -8,6 +8,8 @@ import pytest
 
 from finance_research_lab.agent_models import ToolResult
 from finance_research_lab.daily_radar_report import render_daily_event_radar
+from finance_research_lab.llm.chat_completions_client import ChatCompletionsClient
+from finance_research_lab.llm.usage import LLMUsageSession
 from finance_research_lab.models import (
     EventAnalysis,
     FinancialSnapshot,
@@ -22,6 +24,47 @@ from finance_research_lab.models import (
 from finance_research_lab.workflow import run_daily_radar_workflow
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def test_daily_radar_shares_usage_session_and_scopes_event_calls(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    captured = {}
+
+    def trace(news, watchlist, universe, **kwargs):
+        del watchlist, universe
+        captured.update(kwargs)
+        return ToolResult("trace_news", "success", _report(news))
+
+    monkeypatch.setattr("finance_research_lab.workflow.ThsNewsSource", _one_item_source)
+    monkeypatch.setattr("finance_research_lab.workflow.trace_news_tool", trace)
+    watchlist, universe = _research_inputs(tmp_path)
+    usage = LLMUsageSession(
+        "daily_radar",
+        store_path=tmp_path / "usage.sqlite3",
+        run_id="run-1",
+    )
+    usage.record_success(
+        operation="research_report",
+        model="deepseek-v4-flash",
+        input_tokens=100,
+        output_tokens=20,
+    )
+    client = ChatCompletionsClient(usage_session=usage)
+    output = tmp_path / "daily-radar.md"
+
+    run_daily_radar_workflow(
+        output,
+        as_of=datetime(2026, 7, 16, 12),
+        watchlist_path=watchlist,
+        a_share_universe_path=universe,
+        llm_client=client,
+    )
+
+    assert captured["client"] is client
+    assert captured["scope_id"].startswith("evt_")
+    assert "## LLM 使用与费用" in output.read_text(encoding="utf-8")
 
 
 def test_render_daily_event_radar_has_stable_sections_and_all_sources() -> None:
