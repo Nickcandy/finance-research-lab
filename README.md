@@ -158,6 +158,12 @@ finance-lab sync-company-profiles \
   --output data/a_share_universe.csv
 ```
 
+也可以运行全量续跑脚本。它每批处理 100 只，任一批失败时立即停止，否则持续到 `pending=0`：
+
+```bash
+./scripts/sync-company-profiles-all.sh
+```
+
 也可以只同步指定股票：
 
 ```bash

@@ -198,7 +198,7 @@ def _retry_fetch(fetcher: Callable[[], dict[str, Any] | None], limiter: _RateLim
         limiter.wait()
         try:
             return fetcher()
-        except (KeyError, TypeError, ValueError):
+        except (TypeError, ValueError):
             raise
         except Exception:
             if attempt == len(RETRY_DELAYS):
@@ -254,7 +254,13 @@ def _fetch_ths_profile(symbol: str) -> dict[str, Any] | None:
 
 
 def _fetch_eastmoney_segments(symbol: str) -> dict[str, Any] | None:
-    rows = _records(_akshare().stock_zygc_em(symbol=_eastmoney_symbol(symbol)))
+    try:
+        frame = _akshare().stock_zygc_em(symbol=_eastmoney_symbol(symbol))
+    except KeyError as exc:
+        if "are in the [columns]" in str(exc):
+            return None
+        raise
+    rows = _records(frame)
     if not rows:
         return None
     report_dates = sorted({_date_text(row.get("报告日期")) for row in rows if row.get("报告日期")})

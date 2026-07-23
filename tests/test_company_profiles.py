@@ -203,3 +203,32 @@ def test_sync_company_profiles_caches_normal_no_data(tmp_path, monkeypatch) -> N
     assert result.failed == 0
     assert result.pending == 0
     assert json.loads((cache / "cninfo" / "001309_SZ.json").read_text())["status"] == "no_data"
+
+
+def test_retry_fetch_retries_transient_key_error(monkeypatch) -> None:
+    attempts = 0
+
+    def fetch():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise KeyError("count")
+        return {"main_business": "锂离子电池隔膜"}
+
+    monkeypatch.setattr(company_profiles, "_sleep", lambda _: None)
+
+    result = company_profiles._retry_fetch(fetch, company_profiles._RateLimiter(interval=0))
+
+    assert result == {"main_business": "锂离子电池隔膜"}
+    assert attempts == 2
+
+
+def test_fetch_eastmoney_segments_treats_empty_frame_key_error_as_no_data(monkeypatch) -> None:
+    class EmptyEastmoneyAkShare:
+        def stock_zygc_em(self, symbol):
+            assert symbol == "SZ300029"
+            raise KeyError("None of [Index(['股票代码'])] are in the [columns]")
+
+    monkeypatch.setattr(company_profiles, "_akshare", lambda: EmptyEastmoneyAkShare())
+
+    assert company_profiles._fetch_eastmoney_segments("300029.SZ") is None
