@@ -349,7 +349,7 @@ def _write_pure_price_event_radar(tmp_path) -> tuple[object, str]:
 
 def _snapshot() -> dict[str, object]:
     return {
-        "schema_version": "2.1",
+        "schema_version": "2.2",
         "run": {
             "id": "20260716T120000+0800",
             "event_catalog_id": "20260716T120000+0800",
@@ -369,6 +369,10 @@ def _snapshot() -> dict[str, object]:
             "source_count": 0,
             "alert_count": 0,
             "research_candidate_count": 0,
+            "critical_event_count": 0,
+            "high_event_count": 0,
+            "verify_first_count": 0,
+            "scoring_version": "1.0",
         },
         "events": [],
         "all_events": [],

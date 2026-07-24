@@ -1,18 +1,30 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 
 from finance_research_lab.agent_models import AgentStep
+from finance_research_lab.analysis_router import AnalysisRoute, AnalysisRouter
 from finance_research_lab.daily_radar_snapshot import (
     InvalidRadarSnapshot,
     build_daily_radar_snapshot,
+    market_event_id,
     read_daily_radar_snapshot,
+    validate_daily_radar_snapshot,
     write_daily_radar_snapshot,
 )
 from finance_research_lab.event_sources import SHANGHAI
+from finance_research_lab.impact_assessment import (
+    ConfidenceFeatures,
+    EventImportanceFeatures,
+    FeatureScore,
+    ImpactAssessment,
+    StockImpactFeatures,
+    build_impact_assessment,
+)
 from finance_research_lab.models import (
     EventAnalysis,
     MarketEvent,
@@ -90,7 +102,7 @@ def test_build_daily_radar_snapshot_exposes_stable_frontend_contract() -> None:
         generated_at=window_end,
     )
 
-    assert snapshot["schema_version"] == "2.1"
+    assert snapshot["schema_version"] == "2.2"
     assert snapshot["run"]["id"] == "20260716T120000+0800"
     assert snapshot["run"]["window_start"] == "2026-07-15T12:00:00+08:00"
     assert snapshot["summary"] == {
@@ -102,6 +114,10 @@ def test_build_daily_radar_snapshot_exposes_stable_frontend_contract() -> None:
         "source_count": 2,
         "alert_count": 0,
         "research_candidate_count": 1,
+        "critical_event_count": 0,
+        "high_event_count": 0,
+        "verify_first_count": 0,
+        "scoring_version": "1.0",
     }
     assert snapshot["run"]["warnings"] == [
         "market fallback: primary source unavailable"
@@ -261,7 +277,7 @@ def test_candidate_aggregation_marks_conflicting_directions_as_mixed() -> None:
     candidate = snapshot["candidate_groups"]["verified"][0]
     assert candidate["impact_direction"] == "mixed"
     assert candidate["impact_score"] == 12
-    assert candidate["confidence"] == "high"
+    assert candidate["confidence"] == 0
 
 
 def test_snapshot_builds_watchlist_alerts_and_research_candidates() -> None:
@@ -388,6 +404,91 @@ def test_snapshot_write_is_atomic_and_read_validates_schema(tmp_path) -> None:
         read_daily_radar_snapshot(path)
 
 
+def test_snapshot_v22_exposes_routes_and_keeps_max_positive_and_negative() -> None:
+    first_news = NewsItem(
+        "中际旭创获得重大订单",
+        "公司公告",
+        published_at="2026-07-16T11:00:00+08:00",
+        source_type="announcement",
+    )
+    second_news = NewsItem(
+        "中际旭创供应风险",
+        "可靠媒体",
+        published_at="2026-07-16T10:00:00+08:00",
+    )
+    events = (
+        MarketEvent(first_news.headline, (first_news,)),
+        MarketEvent(second_news.headline, (second_news,)),
+    )
+    positive = _assessment(events[0], positive=82, negative=0, confidence=80)
+    negative = _assessment(events[1], positive=0, negative=71, confidence=42)
+    routed = (
+        _Routed(events[0], AnalysisRouter().route(positive), (positive,)),
+        _Routed(events[1], AnalysisRouter().route(negative), (negative,)),
+    )
+    impacts = (
+        StockImpact(
+            "300308.SZ",
+            "中际旭创",
+            "A股",
+            "direct",
+            "high",
+            impact_direction="positive",
+            confidence="high",
+        ),
+    )
+    reports = (_report(first_news, impacts), _report(second_news, impacts))
+    start = datetime(2026, 7, 15, 12, tzinfo=SHANGHAI)
+    end = datetime(2026, 7, 16, 12, tzinfo=SHANGHAI)
+
+    snapshot = build_daily_radar_snapshot(
+        events,
+        reports,
+        (),
+        start,
+        end,
+        generated_at=end,
+        routed_analyses=routed,
+    )
+
+    assert snapshot["summary"]["critical_event_count"] == 1
+    assert snapshot["summary"]["verify_first_count"] == 1
+    assert snapshot["summary"]["scoring_version"] == "1.0"
+    assert snapshot["events"][0]["analysis_tier"] == "pro"
+    assert snapshot["events"][0]["event_importance"] == positive.event_importance
+    candidate = snapshot["candidate_groups"]["verified"][0]
+    assert candidate["positive_magnitude"] == 82
+    assert candidate["negative_magnitude"] == 71
+    assert candidate["confidence"] == 80
+    assert candidate["conflict_score"] == 0
+    assert candidate["priority_level"] == "critical"
+    assert candidate["analysis_tier"] == "pro"
+    assert candidate["feature_breakdown"]["positive"]["directness"]["value"] == 82
+    assert "fixture:evidence" in candidate["feature_breakdown"]["positive"][
+        "directness"
+    ]["evidence_refs"]
+
+
+@pytest.mark.parametrize("invalid", [True, -1, 101, 1.5, "80"])
+def test_snapshot_v22_rejects_invalid_zero_to_hundred_values(invalid) -> None:
+    payload = _minimal_snapshot()
+    payload["events"] = [
+        {
+            "event_importance": invalid,
+            "importance_level": "low",
+            "confidence": 0,
+            "analysis_tier": "deterministic",
+            "reason_codes": [],
+            "candidates": [],
+            "overall_direction": "unknown",
+            "impact_score": None,
+        }
+    ]
+
+    with pytest.raises(InvalidRadarSnapshot, match="event_importance"):
+        validate_daily_radar_snapshot(payload)
+
+
 def test_build_snapshot_rejects_misaligned_reports() -> None:
     news = NewsItem("事件", "来源", published_at="2026-07-16T11:00:00+08:00")
     with pytest.raises(ValueError, match="reports must align with events"):
@@ -428,7 +529,7 @@ def _report(news: NewsItem, impacts: tuple[StockImpact, ...]) -> ResearchReport:
 
 def _minimal_snapshot() -> dict[str, object]:
     return {
-        "schema_version": "2.1",
+        "schema_version": "2.2",
         "run": {
             "id": "20260716T120000+0800",
             "event_catalog_id": "20260716T120000+0800",
@@ -448,6 +549,10 @@ def _minimal_snapshot() -> dict[str, object]:
             "source_count": 0,
             "alert_count": 0,
             "research_candidate_count": 0,
+            "critical_event_count": 0,
+            "high_event_count": 0,
+            "verify_first_count": 0,
+            "scoring_version": "1.0",
         },
         "events": [],
         "all_events": [],
@@ -462,3 +567,55 @@ def _minimal_snapshot() -> dict[str, object]:
         "validation_tasks": [],
         "disclaimer": "研究辅助，不构成投资建议。",
     }
+
+
+@dataclass(frozen=True)
+class _Routed:
+    event: MarketEvent
+    route: AnalysisRoute
+    assessments: tuple[ImpactAssessment, ...]
+    fallback: str = ""
+    warnings: tuple[str, ...] = ()
+
+
+def _score(value: int) -> FeatureScore:
+    return FeatureScore(value, (f"fixture:{value}",), ("fixture:evidence",))
+
+
+def _assessment(
+    event: MarketEvent,
+    *,
+    positive: int,
+    negative: int,
+    confidence: int,
+) -> ImpactAssessment:
+    def stock(value: int) -> StockImpactFeatures | None:
+        if value == 0:
+            return None
+        return StockImpactFeatures(
+            directness=_score(value),
+            exposure=_score(value),
+            economic_scale=_score(value),
+            duration=_score(value),
+            sensitivity=_score(value),
+        )
+
+    return build_impact_assessment(
+        event_id=market_event_id(event),
+        symbol="300308.SZ",
+        event_features=EventImportanceFeatures(
+            materiality=_score(max(positive, negative)),
+            breadth=_score(50),
+            novelty=_score(50),
+            immediacy=_score(50),
+        ),
+        positive_features=stock(positive),
+        negative_features=stock(negative),
+        confidence_features=ConfidenceFeatures(
+            source_quality=_score(confidence),
+            corroboration=_score(confidence),
+            identity_verification=_score(confidence),
+            quantitative_completeness=_score(confidence),
+            consistency=_score(confidence),
+        ),
+    )

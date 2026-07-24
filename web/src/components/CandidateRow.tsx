@@ -1,10 +1,10 @@
 import { ChevronRight, ShieldAlert, Star } from "lucide-react";
-import type { ImpactStrength, RadarCandidate } from "../types/radar";
+import type { ImpactStrength, RadarCandidate, ScoredRadarCandidate } from "../types/radar";
 import { ImpactBadge } from "./ImpactBadge";
 import { StatusBadge } from "./StatusBadge";
 
 interface CandidateRowProps {
-  candidate: RadarCandidate;
+  candidate: RadarCandidate | ScoredRadarCandidate;
   compact?: boolean;
 }
 
@@ -43,7 +43,9 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <ImpactBadge kind="direction" value={candidate.impact_direction} />
             <ImpactBadge kind="score" value={candidate.impact_score} />
-            <ImpactBadge kind="confidence" value={candidate.confidence} />
+            {typeof candidate.confidence === "number"
+              ? <span className="rounded-full border border-info/20 bg-info-soft px-2.5 py-1 text-[11px] font-semibold text-info">置信度：{candidate.confidence}</span>
+              : <ImpactBadge kind="confidence" value={candidate.confidence} />}
           </div>
         </div>
         <ChevronRight className="mt-2 size-4 shrink-0 text-ink-muted transition group-open:rotate-90" aria-hidden="true" />

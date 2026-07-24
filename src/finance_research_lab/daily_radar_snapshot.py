@@ -10,7 +10,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from .agent_models import AgentStep
@@ -21,19 +21,34 @@ from .impact_scoring import (
     strongest_confidence,
     summarize_event_impact,
 )
+from .impact_assessment import FeatureScore, ImpactAssessment, SCORING_VERSION
 from .models import MarketEvent, ResearchReport, StockImpact
 
-SCHEMA_VERSION = "2.1"
+SCHEMA_VERSION = "2.2"
 DISCLAIMER = "研究辅助，不构成投资建议。"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _WARNING_WORDS = ("fallback", "warning", "unavailable", "失败", "不可用", "异常", "纠正")
 _STRENGTH_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
 _IMPACT_DIRECTIONS = {"positive", "negative", "mixed", "neutral", "unknown"}
 _CONFIDENCES = {"high", "medium", "low", "unknown"}
+_ANALYSIS_TIERS = {"pro", "flash", "deterministic", "not_applicable"}
+_PRIORITY_LEVELS = {"critical", "verify_first", "high", "medium", "low"}
+_IMPORTANCE_LEVELS = {"high", "medium", "low"}
 
 
 class InvalidRadarSnapshot(ValueError):
-    """Raised when a persisted frontend snapshot violates the v2.1 contract."""
+    """Raised when a persisted frontend snapshot violates the v2.2 contract."""
+
+
+class RoutedAnalysis(Protocol):
+    event: MarketEvent
+    assessments: tuple[ImpactAssessment, ...]
+    fallback: str
+    warnings: tuple[str, ...]
+
+    @property
+    def route(self) -> Any:
+        ...
 
 
 @dataclass(frozen=True)
@@ -54,6 +69,7 @@ def build_daily_radar_snapshot(
     *,
     all_events: Sequence[MarketEvent] | None = None,
     generated_at: datetime | None = None,
+    routed_analyses: Sequence[RoutedAnalysis] = (),
 ) -> dict[str, Any]:
     """Build the explicit, versioned JSON contract consumed by the local web UI."""
 
@@ -72,16 +88,41 @@ def build_daily_radar_snapshot(
     generated_at = _shanghai_time(generated_at or datetime.now(SHANGHAI))
 
     event_ids = [market_event_id(event) for event in events]
+    routed_by_event = {
+        market_event_id(routed.event): routed for routed in routed_analyses
+    }
     event_payloads = [
-        _event_payload(event, report, event_ids[index], index + 1, steps)
+        _event_payload(
+            event,
+            report,
+            event_ids[index],
+            index + 1,
+            steps,
+            routed_by_event.get(event_ids[index]),
+        )
         for index, (event, report) in enumerate(zip(events, reports))
     ]
     candidate_groups = _candidate_groups(events, reports, event_ids)
+    _attach_assessment_fields(candidate_groups, routed_analyses)
     alerts = _watchlist_alerts(events, reports, event_ids, generated_at)
     research_candidates = _research_candidates(events, reports, event_ids)
     validation_tasks = _validation_tasks(reports, event_ids)
     warnings = _unique(
-        warning for step in steps for warning in _step_warnings(step)
+        [
+            *(warning for step in steps for warning in _step_warnings(step)),
+            *(
+                warning
+                for routed in routed_analyses
+                for warning in (
+                    *routed.warnings,
+                    *(
+                        (f"{market_event_id(routed.event)} fallback:{routed.fallback}",)
+                        if routed.fallback
+                        else ()
+                    ),
+                )
+            ),
+        ]
     )
     source_count = len(
         {
@@ -138,6 +179,18 @@ def build_daily_radar_snapshot(
             "source_count": source_count,
             "alert_count": len(alerts),
             "research_candidate_count": len(research_candidates),
+            "critical_event_count": sum(
+                routed.route.priority_level == "critical"
+                for routed in routed_analyses
+            ),
+            "high_event_count": sum(
+                routed.route.priority_level == "high" for routed in routed_analyses
+            ),
+            "verify_first_count": sum(
+                routed.route.priority_level == "verify_first"
+                for routed in routed_analyses
+            ),
+            "scoring_version": SCORING_VERSION,
         },
         "events": event_payloads,
         "all_events": all_event_payloads,
@@ -237,23 +290,23 @@ def validate_daily_radar_snapshot(payload: object) -> dict[str, Any]:
         "core_event_count",
         "alert_count",
         "research_candidate_count",
+        "critical_event_count",
+        "high_event_count",
+        "verify_first_count",
     ):
-        if not isinstance(summary.get(name), int):
+        if isinstance(summary.get(name), bool) or not isinstance(summary.get(name), int):
             raise InvalidRadarSnapshot(f"invalid summary.{name}")
+    if summary.get("scoring_version") != SCORING_VERSION:
+        raise InvalidRadarSnapshot("invalid summary.scoring_version")
     for index, event in enumerate(payload["events"]):
         if not isinstance(event, dict):
             raise InvalidRadarSnapshot(f"invalid events.{index}")
-        _validate_impact_fields(event, f"events.{index}", direction_field="overall_direction")
+        _validate_scored_event(event, f"events.{index}")
         if not isinstance(event.get("candidates"), list):
             raise InvalidRadarSnapshot(f"invalid events.{index}.candidates")
-        for candidate_index, candidate in enumerate(event["candidates"]):
-            _validate_impact_fields(
-                candidate,
-                f"events.{index}.candidates.{candidate_index}",
-            )
     for group_name in ("verified", "unverified", "excluded", "watchlist"):
         for index, candidate in enumerate(groups[group_name]):
-            _validate_impact_fields(
+            _validate_scored_candidate(
                 candidate,
                 f"candidate_groups.{group_name}.{index}",
             )
@@ -276,6 +329,44 @@ def validate_daily_radar_snapshot(payload: object) -> dict[str, Any]:
         if event.get("exclusion_reason") not in {"", "pure_stock_price_update"}:
             raise InvalidRadarSnapshot(f"invalid all_events.{index}.exclusion_reason")
     return payload
+
+
+def _validate_scored_event(payload: dict[str, Any], path: str) -> None:
+    _score_0_to_100(payload.get("event_importance"), f"{path}.event_importance")
+    _score_0_to_100(payload.get("confidence"), f"{path}.confidence")
+    if payload.get("importance_level") not in _IMPORTANCE_LEVELS:
+        raise InvalidRadarSnapshot(f"invalid {path}.importance_level")
+    if payload.get("analysis_tier") not in _ANALYSIS_TIERS:
+        raise InvalidRadarSnapshot(f"invalid {path}.analysis_tier")
+    if not isinstance(payload.get("reason_codes"), list):
+        raise InvalidRadarSnapshot(f"invalid {path}.reason_codes")
+    if payload.get("overall_direction") not in _IMPACT_DIRECTIONS:
+        raise InvalidRadarSnapshot(f"invalid {path}.overall_direction")
+
+
+def _validate_scored_candidate(payload: object, path: str) -> None:
+    if not isinstance(payload, dict):
+        raise InvalidRadarSnapshot(f"invalid {path}")
+    for field in (
+        "positive_magnitude",
+        "negative_magnitude",
+        "confidence",
+        "conflict_score",
+    ):
+        _score_0_to_100(payload.get(field), f"{path}.{field}")
+    if payload.get("priority_level") not in _PRIORITY_LEVELS:
+        raise InvalidRadarSnapshot(f"invalid {path}.priority_level")
+    if payload.get("analysis_tier") not in _ANALYSIS_TIERS:
+        raise InvalidRadarSnapshot(f"invalid {path}.analysis_tier")
+    if not isinstance(payload.get("feature_breakdown"), dict):
+        raise InvalidRadarSnapshot(f"invalid {path}.feature_breakdown")
+    if not isinstance(payload.get("reason_codes"), list):
+        raise InvalidRadarSnapshot(f"invalid {path}.reason_codes")
+
+
+def _score_0_to_100(value: object, path: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+        raise InvalidRadarSnapshot(f"invalid {path}")
 
 
 def _validate_impact_fields(
@@ -358,6 +449,7 @@ def _event_payload(
     event_id: str,
     rank: int,
     steps: Sequence[AgentStep],
+    routed: RoutedAnalysis | None = None,
 ) -> dict[str, Any]:
     sources: list[dict[str, str]] = []
     seen_sources: set[tuple[str, str]] = set()
@@ -379,7 +471,7 @@ def _event_payload(
         event_type = "待判断"
         themes: list[str] = []
         key_facts: list[str] = []
-        confidence = "low"
+        report_confidence = "low"
         overall_direction = "unknown"
         impact_score = None
         reasoning = ""
@@ -396,7 +488,7 @@ def _event_payload(
         event_type = report.event.event_type
         themes = list(report.event.themes)
         key_facts = list(report.event.key_facts)
-        confidence = report.event.confidence
+        report_confidence = report.event.confidence
         overall_direction = impact_summary.direction
         impact_score = impact_summary.score
         reasoning = report.event.reasoning
@@ -413,6 +505,35 @@ def _event_payload(
             if impact.market == "A股"
         ]
 
+    assessments = routed.assessments if routed is not None else ()
+    event_importance = max(
+        (assessment.event_importance for assessment in assessments),
+        default=0,
+    )
+    confidence = max(
+        (assessment.confidence for assessment in assessments),
+        default=0,
+    )
+    analysis_tier = (
+        routed.route.analysis_tier if routed is not None else "deterministic"
+    )
+    reason_codes = (
+        list(routed.route.reason_codes)
+        if routed is not None
+        else ["route:deterministic", "route:missing_assessment"]
+    )
+    routed_warnings = (
+        [
+            *routed.warnings,
+            *(
+                (f"analysis fallback: {routed.fallback}",)
+                if routed.fallback
+                else ()
+            ),
+        ]
+        if routed is not None
+        else []
+    )
     return {
         "id": event_id,
         "rank": rank,
@@ -426,13 +547,18 @@ def _event_payload(
         "themes": themes,
         "key_facts": key_facts,
         "confidence": confidence,
+        "report_confidence": report_confidence,
         "overall_direction": overall_direction,
         "impact_score": impact_score,
         "reasoning": reasoning,
         "value_chain": value_chain,
         "candidates": candidates,
         "analysis_status": "succeeded" if report is not None else "failed",
-        "warnings": warnings,
+        "warnings": _unique([*warnings, *routed_warnings]),
+        "event_importance": event_importance,
+        "importance_level": _importance_level(event_importance),
+        "analysis_tier": analysis_tier,
+        "reason_codes": reason_codes,
     }
 
 
@@ -487,6 +613,142 @@ def _candidate_groups(
         if payload["watchlist_hit"]:
             result["watchlist"].append(payload)
     return result
+
+
+def _attach_assessment_fields(
+    groups: dict[str, list[dict[str, Any]]],
+    routed_analyses: Sequence[RoutedAnalysis],
+) -> None:
+    assessments_by_symbol: dict[str, list[ImpactAssessment]] = {}
+    for routed in routed_analyses:
+        for assessment in routed.assessments:
+            if assessment.symbol:
+                assessments_by_symbol.setdefault(assessment.symbol, []).append(
+                    assessment
+                )
+    tier_order = {"pro": 0, "flash": 1, "deterministic": 2, "not_applicable": 3}
+    priority_order = {
+        "critical": 0,
+        "verify_first": 1,
+        "high": 2,
+        "medium": 3,
+        "low": 4,
+    }
+    seen_payloads: set[int] = set()
+    for candidates in groups.values():
+        for candidate in candidates:
+            if id(candidate) in seen_payloads:
+                continue
+            seen_payloads.add(id(candidate))
+            assessments = tuple(assessments_by_symbol.get(candidate["symbol"], ()))
+            if not assessments:
+                candidate.update(
+                    {
+                        "positive_magnitude": 0,
+                        "negative_magnitude": 0,
+                        "confidence": 0,
+                        "conflict_score": 0,
+                        "priority_level": "low",
+                        "analysis_tier": "deterministic",
+                        "feature_breakdown": {},
+                        "reason_codes": ["assessment:missing"],
+                    }
+                )
+                continue
+            positive = max(
+                assessments,
+                key=lambda assessment: assessment.positive_magnitude,
+            )
+            negative = max(
+                assessments,
+                key=lambda assessment: assessment.negative_magnitude,
+            )
+            confidence = max(
+                assessments,
+                key=lambda assessment: assessment.confidence,
+            )
+            strongest_priority = min(
+                assessments,
+                key=lambda assessment: priority_order[assessment.priority_level],
+            )
+            strongest_tier = min(
+                assessments,
+                key=lambda assessment: tier_order[assessment.analysis_tier],
+            )
+            candidate.update(
+                {
+                    "positive_magnitude": positive.positive_magnitude,
+                    "negative_magnitude": negative.negative_magnitude,
+                    "confidence": confidence.confidence,
+                    "conflict_score": max(
+                        assessment.conflict_score for assessment in assessments
+                    ),
+                    "priority_level": strongest_priority.priority_level,
+                    "analysis_tier": strongest_tier.analysis_tier,
+                    "feature_breakdown": {
+                        "positive": _stock_feature_payload(
+                            positive.positive_features
+                        ),
+                        "negative": _stock_feature_payload(
+                            negative.negative_features
+                        ),
+                        "confidence": _confidence_feature_payload(
+                            confidence
+                        ),
+                    },
+                    "reason_codes": _unique(
+                        reason
+                        for assessment in assessments
+                        for reason in assessment.reason_codes
+                    ),
+                }
+            )
+
+
+def _stock_feature_payload(features: Any) -> dict[str, Any]:
+    if features is None:
+        return {}
+    return {
+        name: _feature_score_payload(getattr(features, name))
+        for name in (
+            "directness",
+            "exposure",
+            "economic_scale",
+            "duration",
+            "sensitivity",
+        )
+    }
+
+
+def _confidence_feature_payload(
+    assessment: ImpactAssessment,
+) -> dict[str, Any]:
+    return {
+        name: _feature_score_payload(getattr(assessment.confidence_features, name))
+        for name in (
+            "source_quality",
+            "corroboration",
+            "identity_verification",
+            "quantitative_completeness",
+            "consistency",
+        )
+    }
+
+
+def _feature_score_payload(feature: FeatureScore) -> dict[str, Any]:
+    return {
+        "value": feature.value,
+        "reason_codes": list(feature.reason_codes),
+        "evidence_refs": list(feature.evidence_refs),
+    }
+
+
+def _importance_level(value: int) -> str:
+    if value >= 75:
+        return "high"
+    if value >= 50:
+        return "medium"
+    return "low"
 
 
 def _watchlist_alerts(

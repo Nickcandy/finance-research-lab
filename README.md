@@ -44,10 +44,10 @@
 同花顺最近 24 小时新闻
 → NewsItem
 → MarketEvent 聚类
-→ Top 5 热点排序
-→ LLM / 规则事件分析与 A 股候选发现
-→ AkShare 公司证据 + BaoStock / AkShare 行情校验
-→ reports/daily-radar.md
+→ 全量 Claim / EvidenceLedger / ImpactAssessment
+→ AnalysisRouter 分配 Pro / Flash / deterministic
+→ 重要事件使用 AkShare 公司证据 + BaoStock / AkShare 行情校验
+→ Snapshot v2.2 + Markdown + point-in-time 归档
 ```
 
 URL 手动深挖辅助入口：
@@ -69,13 +69,14 @@ URL 手动深挖辅助入口：
 ```
 
 当前实现已经包含无 URL 的 `daily-radar` 主入口，以及 `trace-news`、`radar` 和 `research-agent`
-三个 URL 手动研究入口。V2.1 已串通同花顺最近 24 小时新闻、事件聚类、Top 5 排序、逐事件产业链
-分析、A 股候选发现和证据校验，并输出固定 Markdown 日报；更多事件源和完整 Serenity 分析仍在后续阶段。
+三个 URL 手动研究入口。当前链路会处理同花顺最近 24 小时的全部可研究新闻，完成事件聚类、Claim
+提取、证据账本、影响评分、分层分析、A 股候选发现和证据校验，并输出固定 Markdown 日报和
+`DailyRadarSnapshot v2.2`。
 
-V2.1 会把只描述个股涨跌、涨跌停、成交额或市值且没有原因的新闻标记为“纯行情播报”：它仍保留在
-`/events`，但不进入核心 Top 5，也不能生成事件分析。已分析事件和股票会展示利好、利空、多空分化、
-中性或待判断方向，以及由强度和影响类型透明计算的影响指数。`/today` 还会展示 Watchlist 风险预警和
-全市场“今日研究候选”Top 10；这些结果用于安排研究优先级，不是收益预测或买入建议。
+系统会把只描述个股涨跌、涨跌停、成交额或市值且没有原因的新闻标记为“纯行情播报”：它仍保留在
+`/events`，但标记为 `not_applicable`。`/today` 展示重大事件、重点股票、高影响待核验、
+Watchlist 风险和评分 breakdown；正负影响不会被合成净分。这些结果用于安排研究优先级，不是收益预测
+或买入建议。
 
 ## 项目结构
 
@@ -197,13 +198,15 @@ corepack pnpm install
 corepack pnpm dev
 ```
 
-访问 `http://127.0.0.1:5173/today` 查看 Top 5，访问 `http://127.0.0.1:5173/events`
+访问 `http://127.0.0.1:5173/today` 查看全量事件评分与重点影响榜，访问 `http://127.0.0.1:5173/events`
 浏览最近 24 小时全部聚类事件。事件详情页可以后台生成单事件报告，并通过 Markdown 接口查看结果。
 Vite 会把 `/api` 转发到本地 Python 服务；刷新按钮只重新读取最新成功快照。可通过
 `http://127.0.0.1:8000/api/health` 检查 API 和快照是否可用。
 
-`daily-radar` 同时写入 `DailyRadarSnapshot v2.1`、完整事件 catalog，以及 Top 5 的单事件分析产物。
-其他可研究聚类只在用户点击“生成分析报告”后调用财报和行情证据工具；纯行情播报只展示原始聚类成员。
+`daily-radar` 会对全部可研究事件生成 Claim、证据账本、影响评分和分析路由；只有
+`critical / verify_first / high` 进入 Pro 深度分析，其余走 Flash 或规则摘要。运行同时写入
+`DailyRadarSnapshot v2.2`、完整 event catalog、单事件分析产物和按 run ID / scoring version
+隔离的 point-in-time 归档。纯行情播报保留在事件目录，但标记为 `not_applicable`。
 
 生成最近 24 小时的 Event-driven 日报：
 
@@ -317,6 +320,8 @@ prompts/investment_research_agent.md
 - 产品文档：[`docs/product-spec-v0.md`](docs/product-spec-v0.md)
 - 路线文档：[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md)
 - 模型接入、上下文控制与 Tool Calling 架构：[`docs/model-and-tooling-architecture.md`](docs/model-and-tooling-architecture.md)
+- 全量新闻事件分级与股票影响评分：[`docs/full-news-impact-scoring-design.md`](docs/full-news-impact-scoring-design.md)
+- 全量新闻评分实施计划与分段提示词：[`docs/full-news-impact-scoring-implementation-plan.md`](docs/full-news-impact-scoring-implementation-plan.md)
 
 ```text
 V0 URL 新闻追源（辅助入口）

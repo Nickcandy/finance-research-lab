@@ -6,6 +6,9 @@ export type ImpactDirection = "positive" | "negative" | "mixed" | "neutral" | "u
 export type ConfidenceLevel = "high" | "medium" | "low" | "unknown";
 export type AnalysisStatus = "succeeded" | "failed" | "not_started" | "queued" | "running" | "not_applicable";
 export type EventExclusionReason = "" | "pure_stock_price_update";
+export type PriorityLevel = "critical" | "verify_first" | "high" | "medium" | "low";
+export type AnalysisTier = "pro" | "flash" | "deterministic" | "not_applicable";
+export type ImportanceLevel = "high" | "medium" | "low";
 
 export interface RadarStep {
   step_name: string;
@@ -34,6 +37,10 @@ export interface RadarSummary {
   source_count: number;
   alert_count: number;
   research_candidate_count: number;
+  critical_event_count: number;
+  high_event_count: number;
+  verify_first_count: number;
+  scoring_version: string;
 }
 
 export interface RadarSource {
@@ -67,6 +74,43 @@ export interface RadarCandidate {
   reasoning: string;
   evidence: string[];
   risks: string[];
+}
+
+export interface FeatureScore {
+  value: number;
+  reason_codes: string[];
+  evidence_refs: string[];
+}
+
+export interface StockFeatureBreakdown {
+  directness?: FeatureScore;
+  exposure?: FeatureScore;
+  economic_scale?: FeatureScore;
+  duration?: FeatureScore;
+  sensitivity?: FeatureScore;
+}
+
+export interface ConfidenceFeatureBreakdown {
+  source_quality?: FeatureScore;
+  corroboration?: FeatureScore;
+  identity_verification?: FeatureScore;
+  quantitative_completeness?: FeatureScore;
+  consistency?: FeatureScore;
+}
+
+export interface ScoredRadarCandidate extends Omit<RadarCandidate, "confidence"> {
+  positive_magnitude: number;
+  negative_magnitude: number;
+  confidence: number;
+  conflict_score: number;
+  priority_level: PriorityLevel;
+  analysis_tier: AnalysisTier;
+  feature_breakdown: {
+    positive?: StockFeatureBreakdown;
+    negative?: StockFeatureBreakdown;
+    confidence?: ConfidenceFeatureBreakdown;
+  };
+  reason_codes: string[];
 }
 
 export interface RadarResearchCandidate extends RadarCandidate {
@@ -105,7 +149,12 @@ export interface RadarEvent {
   key_facts: string[];
   overall_direction: ImpactDirection;
   impact_score: number | null;
-  confidence: ConfidenceLevel;
+  confidence: number;
+  report_confidence: ConfidenceLevel;
+  event_importance: number;
+  importance_level: ImportanceLevel;
+  analysis_tier: AnalysisTier;
+  reason_codes: string[];
   reasoning: string;
   value_chain: ValueChain;
   candidates: RadarCandidate[];
@@ -156,14 +205,14 @@ export interface ValidationTask {
 }
 
 export interface CandidateGroups {
-  verified: RadarCandidate[];
-  unverified: RadarCandidate[];
-  excluded: RadarCandidate[];
-  watchlist: RadarCandidate[];
+  verified: ScoredRadarCandidate[];
+  unverified: ScoredRadarCandidate[];
+  excluded: ScoredRadarCandidate[];
+  watchlist: ScoredRadarCandidate[];
 }
 
 export interface RadarSnapshot {
-  schema_version: "2.1";
+  schema_version: "2.2";
   run: RadarRun;
   summary: RadarSummary;
   events: RadarEvent[];

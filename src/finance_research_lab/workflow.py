@@ -5,8 +5,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .analysis_router import AnalysisRoute, AnalysisRouter
 from .akshare_evidence import AkShareEvidenceProvider
 from .baostock_market import BaoStockMarketProvider
+from .claim_pipeline import ClaimPipeline
 from .daily_radar_report import render_daily_event_radar
 from .daily_radar_snapshot import (
     build_daily_radar_snapshot,
@@ -18,7 +20,10 @@ from .event_eligibility import is_market_event_researchable
 from .event_catalog import event_catalog_path, write_event_catalog
 from .event_analysis import event_analysis_path, write_successful_event_analysis
 from .event_sources import SHANGHAI, ThsNewsSource
+from .evidence_ledger import EvidenceLedger, build_evidence_ledgers
 from .evidence_tool_agent import run_evidence_tool_calls
+from .impact_assessment import ImpactAssessment
+from .impact_features import build_impact_assessments
 from .llm.chat_completions_client import ChatCompletionsClient
 from .llm.usage import render_usage_markdown
 from .market_evidence import FallbackMarketProvider, MarketEvidenceProvider
@@ -45,9 +50,15 @@ from .models import (
     ResearchAgentResult,
     ResearchReport,
     ResearchTask,
+    StockImpact,
     WatchlistItem,
 )
-from .news_trace import verify_research_report_candidates
+from .news_trace import build_research_report, verify_research_report_candidates
+from .point_in_time import (
+    build_point_in_time_payload,
+    point_in_time_path,
+    write_point_in_time,
+)
 from .radar_report import render_opportunity_radar
 from .research_planner import plan_research_tasks
 from .research_agent import analyze_research_report_with_agent
@@ -70,6 +81,17 @@ class MarketEventAnalysisOutcome:
     report: ResearchReport
     steps: tuple[AgentStep, ...]
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RoutedEventAnalysis:
+    event: MarketEvent
+    route: AnalysisRoute
+    assessments: tuple[ImpactAssessment, ...]
+    ledgers: tuple[EvidenceLedger, ...]
+    report: ResearchReport | None
+    fallback: str = ""
+    warnings: tuple[str, ...] = ()
 
 
 def _summarize_output(output: Any) -> str:
@@ -267,7 +289,7 @@ def run_daily_radar_workflow(
         )
         ranked_events = tuple(
             event for event in all_ranked_events if is_market_event_researchable(event)
-        )[:5]
+        )
     except Exception as exc:
         rank_result = ToolResult("rank_hot_events", "error", (), str(exc))
     else:
@@ -291,6 +313,43 @@ def run_daily_radar_workflow(
     if universe_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
 
+    try:
+        claim_result = ClaimPipeline(
+            llm_client,
+            Path(evidence_cache_path) / "claims",
+        ).extract(ranked_events)
+        ledgers = build_evidence_ledgers(
+            ranked_events,
+            claim_result.claims,
+            universe_result.output,
+            watchlist_symbols=(item.symbol for item in watchlist_result.output),
+        )
+        assessments = build_impact_assessments(
+            ranked_events,
+            ledgers,
+            universe_result.output,
+        )
+    except Exception as exc:
+        claim_step_result = ToolResult(
+            "score_all_market_events",
+            "error",
+            (),
+            str(exc),
+        )
+    else:
+        claim_step_result = ToolResult(
+            "score_all_market_events",
+            "success",
+            assessments,
+            "；".join(claim_result.warnings),
+        )
+    steps.append(_step("score_all_market_events", claim_step_result))
+    if claim_step_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    ledgers_by_event = _group_ledgers_by_event(ledgers)
+    assessments_by_event = _group_assessments_by_event(assessments)
+    router = AnalysisRouter()
     company_provider = AkShareEvidenceProvider(evidence_cache_path, refresh=refresh_evidence)
     market_provider = FallbackMarketProvider(
         BaoStockMarketProvider(market_cache_path, refresh=refresh_evidence),
@@ -298,27 +357,72 @@ def run_daily_radar_workflow(
     )
     registry = _research_tool_registry(company_provider, market_provider)
     reports: list[ResearchReport | None] = []
+    routed_analyses: list[RoutedEventAnalysis] = []
     daily_tool_results: tuple[ToolResult, ...] = ()
     daily_attempted_tools: dict[str, frozenset[str]] = {}
     for index, event in enumerate(rank_result.output, start=1):
-        report, daily_tool_results, event_steps, _ = _analyze_market_event(
-            event,
-            watchlist_result.output,
-            universe_result.output,
-            registry,
-            initial_results=daily_tool_results,
-            attempted_tools=daily_attempted_tools,
-            step_suffix=f":{index}",
-            llm_client=llm_client,
-            scope_id=market_event_id(event),
+        event_id = market_event_id(event)
+        event_assessments = assessments_by_event.get(event_id, ())
+        route = _event_route(router, event_id, event_assessments)
+        steps.append(
+            _step(
+                f"route_event:{index}",
+                ToolResult(
+                    "route_event_analysis",
+                    "success",
+                    route.analysis_tier,
+                    "；".join(route.reason_codes),
+                ),
+            )
         )
-        steps.extend(event_steps)
-        if report is None:
-            reports.append(None)
-            continue
+        fallback = ""
+        warnings: tuple[str, ...] = ()
+        if route.analysis_tier == "pro":
+            report, daily_tool_results, event_steps, event_warnings = (
+                _analyze_market_event(
+                    event,
+                    watchlist_result.output,
+                    universe_result.output,
+                    registry,
+                    initial_results=daily_tool_results,
+                    attempted_tools=daily_attempted_tools,
+                    step_suffix=f":{index}",
+                    llm_client=llm_client,
+                    scope_id=event_id,
+                )
+            )
+            steps.extend(event_steps)
+            warnings = tuple(event_warnings)
+            if report is None:
+                fallback = "deterministic"
+                report = _build_rule_report(
+                    event,
+                    watchlist_result.output,
+                    universe_result.output,
+                    event_assessments,
+                )
+                warnings = (*warnings, "pro analysis failed; deterministic fallback used")
+        else:
+            report = _build_rule_report(
+                event,
+                watchlist_result.output,
+                universe_result.output,
+                event_assessments,
+            )
         reports.append(report)
+        routed_analyses.append(
+            RoutedEventAnalysis(
+                event=event,
+                route=route,
+                assessments=event_assessments,
+                ledgers=ledgers_by_event.get(event_id, ()),
+                report=report,
+                fallback=fallback,
+                warnings=warnings,
+            )
+        )
 
-    if not any(report is not None for report in reports):
+    if not routed_analyses:
         return AgentRun("daily_radar", steps, str(output_path))
 
     try:
@@ -327,6 +431,7 @@ def run_daily_radar_workflow(
             window_start,
             window_end,
             tuple(reports),
+            routed_analyses,
         )
     except Exception as exc:
         render_result = ToolResult("render_daily_event_radar", "error", "", str(exc))
@@ -354,6 +459,7 @@ def run_daily_radar_workflow(
             window_end,
             all_events=all_ranked_events,
             generated_at=window_end,
+            routed_analyses=routed_analyses,
         )
     except Exception as exc:
         snapshot_result = ToolResult("write_daily_radar_snapshot", "error", "", str(exc))
@@ -369,6 +475,31 @@ def run_daily_radar_workflow(
         catalog_result = ToolResult("write_event_catalog", "success", str(catalog_path))
     steps.append(_step("write_event_catalog", catalog_result))
     if catalog_result.status == "error":
+        return AgentRun("daily_radar", steps, str(output_path))
+
+    try:
+        pit_payload = build_point_in_time_payload(
+            run_id=snapshot["run"]["id"],
+            generated_at=snapshot["run"]["generated_at"],
+            events=rank_result.output,
+            claims=claim_result.claims,
+            routed_analyses=routed_analyses,
+            snapshot=snapshot,
+        )
+        pit_path = write_point_in_time(
+            pit_payload,
+            point_in_time_path(
+                json_output_path,
+                snapshot["run"]["id"],
+                snapshot["summary"]["scoring_version"],
+            ),
+        )
+    except Exception as exc:
+        pit_result = ToolResult("write_point_in_time", "error", "", str(exc))
+    else:
+        pit_result = ToolResult("write_point_in_time", "success", str(pit_path))
+    steps.append(_step("write_point_in_time", pit_result))
+    if pit_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
 
     try:
@@ -421,6 +552,126 @@ def _shanghai_time(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=SHANGHAI)
     return value.astimezone(SHANGHAI)
+
+
+def _group_ledgers_by_event(
+    ledgers: tuple[EvidenceLedger, ...],
+) -> dict[str, tuple[EvidenceLedger, ...]]:
+    grouped: dict[str, list[EvidenceLedger]] = {}
+    for ledger in ledgers:
+        grouped.setdefault(ledger.event_id, []).append(ledger)
+    return {event_id: tuple(values) for event_id, values in grouped.items()}
+
+
+def _group_assessments_by_event(
+    assessments: tuple[ImpactAssessment, ...],
+) -> dict[str, tuple[ImpactAssessment, ...]]:
+    grouped: dict[str, list[ImpactAssessment]] = {}
+    for assessment in assessments:
+        grouped.setdefault(assessment.event_id, []).append(assessment)
+    return {event_id: tuple(values) for event_id, values in grouped.items()}
+
+
+def _event_route(
+    router: AnalysisRouter,
+    event_id: str,
+    assessments: tuple[ImpactAssessment, ...],
+) -> AnalysisRoute:
+    if not assessments:
+        return AnalysisRoute(
+            event_id=event_id,
+            analysis_tier="deterministic",
+            priority_level="low",
+            reason_codes=("route:deterministic", "route:no_stock_assessment"),
+            verify_first=False,
+        )
+    tier_order = {"pro": 0, "flash": 1, "deterministic": 2, "not_applicable": 3}
+    routes = tuple(router.route(assessment) for assessment in assessments)
+    strongest = min(routes, key=lambda route: tier_order[route.analysis_tier])
+    return replace(
+        strongest,
+        reason_codes=tuple(
+            dict.fromkeys(reason for route in routes for reason in route.reason_codes)
+        ),
+        verify_first=any(route.verify_first for route in routes),
+    )
+
+
+def _build_rule_report(
+    event: MarketEvent,
+    watchlist: list[WatchlistItem],
+    universe: list[AShareCompany],
+    assessments: tuple[ImpactAssessment, ...],
+) -> ResearchReport:
+    base = build_research_report(_market_event_news(event), watchlist, universe)
+    companies = {company.symbol: company for company in universe}
+    impacts = []
+    for assessment in assessments:
+        company = companies.get(assessment.symbol)
+        if company is None:
+            continue
+        magnitude = max(
+            assessment.positive_magnitude,
+            assessment.negative_magnitude,
+        )
+        strength = "high" if magnitude >= 60 else "medium" if magnitude >= 35 else "low"
+        confidence = (
+            "high"
+            if assessment.confidence >= 70
+            else "medium"
+            if assessment.confidence >= 45
+            else "low"
+        )
+        evidence = tuple(
+            dict.fromkeys(
+                feature_ref
+                for feature in (
+                    assessment.positive_features,
+                    assessment.negative_features,
+                )
+                if feature is not None
+                for score in (
+                    feature.directness,
+                    feature.exposure,
+                    feature.economic_scale,
+                    feature.duration,
+                    feature.sensitivity,
+                )
+                for feature_ref in score.evidence_refs
+            )
+        )
+        impacts.append(
+            StockImpact(
+                symbol=company.symbol,
+                name=company.name,
+                market=company.market,
+                impact_type="direct",
+                impact_strength=strength,
+                themes=company.themes,
+                reasoning="；".join(assessment.reason_codes),
+                evidence=evidence,
+                risks=(
+                    ("正负证据并存，需进一步核验",)
+                    if assessment.direction == "mixed"
+                    else ()
+                ),
+                verification_status="verified",
+                verification_source=(
+                    "local A-share universe and deterministic evidence ledger"
+                ),
+                watchlist_hit=any(item.symbol == company.symbol for item in watchlist),
+                impact_direction=assessment.direction,
+                confidence=confidence,
+            )
+        )
+    return replace(
+        base,
+        event=replace(
+            base.event,
+            reasoning="基于 Claim、EvidenceLedger 和固定评分规则生成的简报。",
+        ),
+        stock_impacts=tuple(impacts),
+    )
 
 
 def run_market_event_analysis(

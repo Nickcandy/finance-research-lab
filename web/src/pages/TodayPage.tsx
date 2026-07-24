@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowUpRight, Newspaper } from "lucide-react";
 import { CandidateQueue } from "../components/CandidateQueue";
 import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 import { EventCard } from "../components/EventCard";
+import { ImpactRankings } from "../components/ImpactRankings";
 import { RadarHeader } from "../components/RadarHeader";
 import { RunAudit } from "../components/RunAudit";
 import { ResearchCandidates } from "../components/ResearchCandidates";
@@ -43,6 +44,7 @@ export function TodayPage() {
 
       <div className="mt-6"><SummaryStrip summary={radar.summary} /></div>
       <WatchlistAlerts alerts={radar.alerts} />
+      <ImpactRankings events={radar.events} groups={radar.candidate_groups} />
 
       <div className="mt-7 grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(330px,0.75fr)]">
         <section className="min-w-0" aria-labelledby="events-heading">

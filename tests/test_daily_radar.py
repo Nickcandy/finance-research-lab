@@ -7,7 +7,14 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from finance_research_lab.agent_models import ToolResult
+from finance_research_lab.claim_pipeline import (
+    ClaimBatchResult,
+    ClaimPipelineResult,
+    stable_news_item_id,
+)
+from finance_research_lab.claims import Claim
 from finance_research_lab.daily_radar_report import render_daily_event_radar
+from finance_research_lab.daily_radar_snapshot import market_event_id
 from finance_research_lab.llm.chat_completions_client import ChatCompletionsClient
 from finance_research_lab.llm.usage import LLMUsageSession
 from finance_research_lab.models import (
@@ -38,6 +45,7 @@ def test_daily_radar_shares_usage_session_and_scopes_event_calls(
         return ToolResult("trace_news", "success", _report(news))
 
     monkeypatch.setattr("finance_research_lab.workflow.ThsNewsSource", _one_item_source)
+    _force_pro_claims(monkeypatch)
     monkeypatch.setattr("finance_research_lab.workflow.trace_news_tool", trace)
     watchlist, universe = _research_inputs(tmp_path)
     usage = LLMUsageSession(
@@ -223,7 +231,7 @@ def test_render_daily_event_radar_keeps_false_positives_out_of_a_share_candidate
         ),
     ],
 )
-def test_daily_radar_workflow_uses_shanghai_window_and_writes_top_five(
+def test_daily_radar_workflow_scores_all_events_without_forcing_pro(
     tmp_path,
     monkeypatch,
     as_of: datetime,
@@ -274,11 +282,11 @@ def test_daily_radar_workflow_uses_shanghai_window_and_writes_top_five(
         "read_watchlist",
         "read_a_share_universe",
     ]
-    assert sum(step.step_name.startswith("analyze_event:") for step in run.steps) == 5
-    assert sum(step.step_name.startswith("verify_event_candidates:") for step in run.steps) == 5
+    assert sum(step.step_name.startswith("route_event:") for step in run.steps) == 6
+    assert sum(step.step_name.startswith("analyze_event:") for step in run.steps) == 0
     assert [step.step_name for step in run.steps[-2:]] == ["render_daily_radar", "write_report"]
     assert all(step.status == "success" for step in run.steps)
-    assert [step.summary for step in run.steps[:3]] == ["6 item(s)", "6 item(s)", "5 item(s)"]
+    assert [step.summary for step in run.steps[:3]] == ["6 item(s)", "6 item(s)", "6 item(s)"]
     assert captured == {
         "cache_dir": cache,
         "since": expected_until.replace(day=15),
@@ -287,7 +295,7 @@ def test_daily_radar_workflow_uses_shanghai_window_and_writes_top_five(
     markdown = output.read_text(encoding="utf-8")
     assert "事件 5" in markdown
     assert "事件 1" in markdown
-    assert "事件 0" not in markdown
+    assert "事件 0" in markdown
 
 
 def test_daily_radar_workflow_verifies_candidates_with_company_and_market_evidence(
@@ -295,6 +303,7 @@ def test_daily_radar_workflow_verifies_candidates_with_company_and_market_eviden
     monkeypatch,
 ) -> None:
     monkeypatch.setattr("finance_research_lab.workflow.ThsNewsSource", _one_item_source)
+    _force_pro_claims(monkeypatch)
     impact = StockImpact(
         "300308.SZ",
         "中际旭创",
@@ -363,9 +372,14 @@ def test_daily_radar_workflow_verifies_candidates_with_company_and_market_eviden
     markdown = output.read_text(encoding="utf-8")
     assert "## 2. 已校验 A股候选\n\n- 中际旭创（300308.SZ，A股）" in markdown
     assert "AkShare company and baostock market evidence" in markdown
+    assert "## 8. 重大事件榜" in markdown
+    assert "## 9. 重点股票榜" in markdown
+    assert "## 10. 高影响待核验" in markdown
+    assert "## 11. Watchlist 风险预警" in markdown
+    assert "影响分表示研究优先级，不是收益预测" in markdown
 
 
-def test_daily_radar_snapshot_keeps_all_events_but_analyzes_only_top_five(
+def test_daily_radar_snapshot_keeps_and_routes_all_researchable_events(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -400,10 +414,10 @@ def test_daily_radar_snapshot_keeps_all_events_but_analyzes_only_top_five(
 
     payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     assert len(payload["all_events"]) == 6
-    assert len(payload["events"]) == 5
+    assert len(payload["events"]) == 6
     assert payload["summary"]["total_event_count"] == 6
-    assert payload["summary"]["core_event_count"] == 5
-    assert len(analyzed) == 5
+    assert payload["summary"]["core_event_count"] == 6
+    assert len(analyzed) == 0
     catalog = json.loads(
         (tmp_path / "event-catalogs" / f"{payload['run']['id']}.json").read_text(
             encoding="utf-8"
@@ -464,7 +478,7 @@ def test_daily_radar_keeps_pure_price_event_but_skips_its_analysis(
     assert pure_summary["exclusion_reason"] == "pure_stock_price_update"
     assert pure_price.headline not in analyzed
     assert pure_price.headline not in {event["title"] for event in payload["events"]}
-    assert len(analyzed) == 5
+    assert len(analyzed) == 0
 
 
 def test_daily_radar_does_not_fetch_evidence_for_unresolved_candidate(
@@ -513,6 +527,7 @@ def test_daily_radar_does_not_fetch_evidence_for_unresolved_candidate(
 
 def test_daily_radar_workflow_writes_optional_frontend_snapshot(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("finance_research_lab.workflow.ThsNewsSource", _one_item_source)
+    _force_pro_claims(monkeypatch)
     impact = StockImpact(
         "300308.SZ",
         "中际旭创",
@@ -543,10 +558,31 @@ def test_daily_radar_workflow_writes_optional_frontend_snapshot(tmp_path, monkey
     assert run.steps[-1].step_name == "write_snapshot"
     assert run.steps[-1].status == "success"
     payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "2.1"
+    assert payload["schema_version"] == "2.2"
+    assert payload["events"][0]["analysis_tier"] == "pro"
+    assert payload["events"][0]["event_importance"] >= 0
+    assert payload["summary"]["scoring_version"] == "1.0"
     assert payload["events"][0]["title"] == "事件"
     assert payload["all_events"][0]["title"] == "事件"
     assert (tmp_path / "event-catalogs" / f"{payload['run']['id']}.json").is_file()
+    assert (
+        tmp_path
+        / "point-in-time"
+        / payload["run"]["id"]
+        / "scoring-1.0.json"
+    ).is_file()
+    pit_payload = json.loads(
+        (
+            tmp_path
+            / "point-in-time"
+            / payload["run"]["id"]
+            / "scoring-1.0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert pit_payload["snapshot"]["run"]["id"] == payload["run"]["id"]
+    assert pit_payload["event_catalog_path"] == (
+        f"event-catalogs/{payload['run']['id']}.json"
+    )
     event_id = payload["events"][0]["id"]
     assert (tmp_path / "event-analyses" / payload["run"]["id"] / f"{event_id}.json").is_file()
     assert payload["candidate_groups"]["unverified"][0]["symbol"] == "300308.SZ"
@@ -636,16 +672,16 @@ def test_daily_radar_workflow_empty_source_stops_at_rank_without_overwriting(
         (
             "render_daily_event_radar",
             "render failed",
-            (
-                "fetch_event_source",
-                "cluster_market_events",
-                "rank_hot_events",
-                "read_watchlist",
-                "read_a_share_universe",
-                "analyze_event:1",
-                "verify_event_candidates:1",
-                "render_daily_radar",
-            ),
+                (
+                    "fetch_event_source",
+                    "cluster_market_events",
+                    "rank_hot_events",
+                    "read_watchlist",
+                    "read_a_share_universe",
+                    "score_all_market_events",
+                    "route_event:1",
+                    "render_daily_radar",
+                ),
         ),
     ],
 )
@@ -706,6 +742,132 @@ def test_daily_radar_workflow_records_write_failure(tmp_path, monkeypatch) -> No
     assert run.steps[-1].status == "error"
     assert run.steps[-1].summary == "disk full"
     assert not output.exists()
+
+
+def test_daily_radar_pro_events_isolate_scope_and_reuse_company_evidence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    items = (
+        _news("事件 A", "2026-07-16T11:00:00+08:00", url="https://example.com/a"),
+        _news("事件 B", "2026-07-16T10:00:00+08:00", url="https://example.com/b"),
+    )
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.ThsNewsSource",
+        lambda cache_dir: type(
+            "Source",
+            (),
+            {"fetch": lambda self, since, until: items},
+        )(),
+    )
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.cluster_market_events",
+        lambda news_items: tuple(MarketEvent(item.headline, (item,)) for item in news_items),
+    )
+    _force_pro_claims(monkeypatch)
+    scopes = []
+    impact = StockImpact("300308.SZ", "中际旭创", "A股", "direct", "high")
+
+    def trace(news, watchlist, universe, **kwargs):
+        del watchlist, universe
+        scopes.append(kwargs["scope_id"])
+        return ToolResult("trace_news", "success", _report(news, (impact,)))
+
+    monkeypatch.setattr("finance_research_lab.workflow.trace_news_tool", trace)
+    calls = {"financials": 0, "market": 0}
+
+    class CompanyProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def financials(self, symbol):
+            calls["financials"] += 1
+            return (FinancialSnapshot(symbol, "2025-12-31", revenue=100),)
+
+        def announcements(self, symbol, start_date="", end_date=""):
+            return ()
+
+    class MarketProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def market(self, symbol, lookback_days):
+            calls["market"] += 1
+            return MarketSnapshot(
+                symbol,
+                "2026-07-16",
+                100,
+                102,
+                99,
+                101,
+                1,
+                1000,
+                10000,
+                lookback_days,
+            )
+
+    monkeypatch.setattr("finance_research_lab.workflow.AkShareEvidenceProvider", CompanyProvider)
+    monkeypatch.setattr("finance_research_lab.workflow.BaoStockMarketProvider", MarketProvider)
+    watchlist, universe = _research_inputs(tmp_path)
+
+    run = run_daily_radar_workflow(
+        tmp_path / "daily-radar.md",
+        as_of=datetime(2026, 7, 16, 12),
+        watchlist_path=watchlist,
+        a_share_universe_path=universe,
+        llm_client=ChatCompletionsClient(),
+    )
+
+    assert run.steps[-1].status == "success"
+    assert len(scopes) == 2
+    assert len(set(scopes)) == 2
+    assert calls == {"financials": 1, "market": 1}
+
+
+def test_daily_radar_pro_failure_downgrades_only_current_event(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    items = (
+        _news("失败事件", "2026-07-16T11:00:00+08:00"),
+        _news("成功事件", "2026-07-16T10:00:00+08:00"),
+    )
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.ThsNewsSource",
+        lambda cache_dir: type(
+            "Source",
+            (),
+            {"fetch": lambda self, since, until: items},
+        )(),
+    )
+    monkeypatch.setattr(
+        "finance_research_lab.workflow.cluster_market_events",
+        lambda news_items: tuple(MarketEvent(item.headline, (item,)) for item in news_items),
+    )
+    _force_pro_claims(monkeypatch)
+
+    def trace(news, watchlist, universe, **kwargs):
+        del watchlist, universe, kwargs
+        if news.headline == "失败事件":
+            return ToolResult("trace_news", "error", None, "pro unavailable")
+        return ToolResult("trace_news", "success", _report(news))
+
+    monkeypatch.setattr("finance_research_lab.workflow.trace_news_tool", trace)
+    watchlist, universe = _research_inputs(tmp_path)
+
+    run = run_daily_radar_workflow(
+        tmp_path / "daily-radar.md",
+        as_of=datetime(2026, 7, 16, 12),
+        watchlist_path=watchlist,
+        a_share_universe_path=universe,
+    )
+
+    analyze_steps = [
+        step for step in run.steps if step.step_name.startswith("analyze_event:")
+    ]
+    assert [step.status for step in analyze_steps] == ["error", "success"]
+    assert run.steps[-1].step_name == "write_report"
+    assert run.steps[-1].status == "success"
 
 
 def _news(
@@ -775,3 +937,35 @@ def _one_item_source(cache_dir):
         (),
         {"name": "ths_global_news", "fetch": lambda self, since, until: (item,)},
     )()
+
+
+def _force_pro_claims(monkeypatch) -> None:
+    def extract(_self, events):
+        claims = tuple(
+            Claim(
+                id=f"claim:{market_event_id(event)}",
+                event_id=market_event_id(event),
+                source_item_ids=(stable_news_item_id(event.items[0]),),
+                subject="中际旭创",
+                predicate="发生",
+                object="实际控制人发生变更",
+                claim_type="fact",
+                event_type="回购 / 减持 / 控制权",
+                direction="positive",
+                time_horizon="long",
+                affected_symbols=("300308.SZ",),
+                quantitative_facts=(),
+                confidence="high",
+                occurred_at=event.items[0].published_at,
+            )
+            for event in events
+        )
+        return ClaimPipelineResult(
+            claims=claims,
+            warnings=(),
+            batches=(ClaimBatchResult(1, len(events), len(claims), "success"),),
+            cache_hits=0,
+            fallback_count=0,
+        )
+
+    monkeypatch.setattr("finance_research_lab.workflow.ClaimPipeline.extract", extract)

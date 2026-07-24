@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from .impact_scoring import (
@@ -10,9 +12,19 @@ from .impact_scoring import (
     summarize_event_impact,
 )
 from .models import MarketEvent, ResearchReport, StockImpact
+from .impact_assessment import ImpactAssessment
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 PENDING_SECTION = "暂无（Task 5/6 尚未接入）"
+
+
+class RoutedAnalysis(Protocol):
+    event: MarketEvent
+    assessments: tuple[ImpactAssessment, ...]
+
+    @property
+    def route(self) -> Any:
+        ...
 
 
 def render_daily_event_radar(
@@ -20,6 +32,7 @@ def render_daily_event_radar(
     window_start: datetime,
     window_end: datetime,
     reports: tuple[ResearchReport | None, ...] | None = None,
+    routed_analyses: Sequence[RoutedAnalysis] = (),
 ) -> str:
     """Render ranked market events into the stable daily radar skeleton."""
 
@@ -40,6 +53,10 @@ def render_daily_event_radar(
     watchlist_hits = _format_candidates(reports, "watchlist") if reports is not None else PENDING_SECTION
     validation_tasks = _format_validation_tasks(reports) if reports is not None else PENDING_SECTION
     review = "暂无" if reports is not None else PENDING_SECTION
+    major_events, ranked_stocks, verify_first, watchlist_risks = _scored_sections(
+        reports,
+        routed_analyses,
+    )
 
     return f"""# 今日 A股投资研究雷达 {window_end.date().isoformat()}
 
@@ -74,7 +91,114 @@ def render_daily_event_radar(
 ## 7. 待复盘记录
 
 {review}
+
+## 8. 重大事件榜
+
+{major_events}
+
+## 9. 重点股票榜
+
+{ranked_stocks}
+
+## 10. 高影响待核验
+
+{verify_first}
+
+## 11. Watchlist 风险预警
+
+{watchlist_risks}
+
+> 影响分表示研究优先级，不是收益预测，不构成投资建议。
 """
+
+
+def _scored_sections(
+    reports: tuple[ResearchReport | None, ...] | None,
+    routed_analyses: Sequence[RoutedAnalysis],
+) -> tuple[str, str, str, str]:
+    if not routed_analyses:
+        return ("暂无", "暂无", "暂无", "暂无")
+    major = sorted(
+        routed_analyses,
+        key=lambda routed: (
+            -max(
+                (
+                    assessment.event_importance
+                    for assessment in routed.assessments
+                ),
+                default=0,
+            ),
+            routed.event.title,
+        ),
+    )
+    major_lines = [
+        (
+            f"- {routed.event.title}：重要度 "
+            f"{max((item.event_importance for item in routed.assessments), default=0)}；"
+            f"{routed.route.priority_level} / {routed.route.analysis_tier}"
+        )
+        for routed in major
+    ]
+    names, watchlist = _report_company_context(reports)
+    by_symbol: dict[str, list[ImpactAssessment]] = {}
+    for routed in routed_analyses:
+        for assessment in routed.assessments:
+            if assessment.symbol:
+                by_symbol.setdefault(assessment.symbol, []).append(assessment)
+    stock_rows = sorted(
+        by_symbol.items(),
+        key=lambda item: (
+            -max(
+                max(value.positive_magnitude, value.negative_magnitude)
+                for value in item[1]
+            ),
+            item[0],
+        ),
+    )
+    stock_lines = [
+        (
+            f"- {names.get(symbol, symbol)}（{symbol}）：正向 "
+            f"{max(item.positive_magnitude for item in assessments)} / 负向 "
+            f"{max(item.negative_magnitude for item in assessments)} / 置信度 "
+            f"{max(item.confidence for item in assessments)}"
+        )
+        for symbol, assessments in stock_rows
+    ]
+    verify_lines = [
+        f"- {routed.event.title}：高影响低置信，优先补充原始证据。"
+        for routed in routed_analyses
+        if routed.route.verify_first
+    ]
+    risk_lines = [
+        (
+            f"- {names.get(symbol, symbol)}（{symbol}）：负向影响 "
+            f"{max(item.negative_magnitude for item in assessments)}"
+        )
+        for symbol, assessments in stock_rows
+        if symbol in watchlist
+        and max(item.negative_magnitude for item in assessments) >= 60
+    ]
+    return (
+        "\n".join(major_lines) or "暂无",
+        "\n".join(stock_lines) or "暂无",
+        "\n".join(verify_lines) or "暂无",
+        "\n".join(risk_lines) or "暂无",
+    )
+
+
+def _report_company_context(
+    reports: tuple[ResearchReport | None, ...] | None,
+) -> tuple[dict[str, str], set[str]]:
+    names: dict[str, str] = {}
+    watchlist: set[str] = set()
+    for report in reports or ():
+        if report is None:
+            continue
+        for impact in report.stock_impacts:
+            names.setdefault(impact.symbol, impact.name)
+            if impact.watchlist_hit:
+                watchlist.add(impact.symbol)
+    return names, watchlist
 
 
 def _event_sections(

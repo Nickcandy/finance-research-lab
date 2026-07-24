@@ -29,10 +29,16 @@ describe("TodayPage", () => {
 
     expect(screen.getByLabelText("正在加载今日雷达")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "今日研究雷达" })).toBeInTheDocument();
-    expect(screen.getByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力")).toBeInTheDocument();
+    expect(screen.getAllByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力").length).toBeGreaterThan(0);
     expect(screen.getAllByText("宁德时代").length).toBeGreaterThan(0);
     expect(screen.getByText("Watchlist 命中 2 个候选")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Watchlist 风险预警" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "影响优先级" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "高影响待核验" })).toBeInTheDocument();
+    expect(screen.getByText("正向 84")).toBeInTheDocument();
+    expect(screen.getByText("负向 18")).toBeInTheDocument();
+    expect(screen.getAllByText(/Pro 深度分析/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/影响分是研究优先级，不是收益预测/)).toBeInTheDocument();
     expect(screen.getByText("平安银行")).toBeInTheDocument();
     expect(screen.getByText("000001.SZ")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "今日研究候选" })).toBeInTheDocument();
@@ -44,18 +50,21 @@ describe("TodayPage", () => {
     expect(screen.getByText("京麦 AI 是否向第三方 SaaS 开放接口或产生明确采购？")).toBeInTheDocument();
     expect(screen.getByText(/当前展示前端预览 fixture/)).toBeInTheDocument();
 
-    const firstEvent = screen.getByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力").closest("article");
+    const firstEvent = screen
+      .getAllByText("京东推出京麦 AI 经营中心，面向商家开放智能经营能力")
+      .map((element) => element.closest("article"))
+      .find((element) => element !== null);
     expect(firstEvent).not.toBeNull();
     expect(within(firstEvent!).getByText("总体方向：利好")).toBeInTheDocument();
     expect(within(firstEvent!).getByText("指数：+28")).toBeInTheDocument();
-    expect(within(firstEvent!).getByText("置信度：高")).toBeInTheDocument();
+    expect(within(firstEvent!).getByText("证据置信度：82")).toBeInTheDocument();
 
     const verifiedGroup = screen.getByRole("heading", { name: "已校验候选" }).closest("section");
     expect(verifiedGroup).not.toBeNull();
     expect(within(verifiedGroup!).getByText("直接影响 / 高强度")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("方向：利好")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("指数：+80")).toBeInTheDocument();
-    expect(within(verifiedGroup!).getByText("置信度：高")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("置信度：88")).toBeInTheDocument();
     await user.click(within(verifiedGroup!).getByText("宁德时代"));
     expect(within(verifiedGroup!).getByText(/贸易政策变化/)).toBeInTheDocument();
 
@@ -95,6 +104,16 @@ describe("TodayPage", () => {
     await user.click(screen.getByRole("button", { name: "重新读取" }));
     expect(await screen.findByRole("heading", { name: "今日研究雷达" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a v2.1 snapshot with a clear version error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse({
+      ...fixture,
+      schema_version: "2.1",
+    })));
+    renderPage();
+
+    expect(await screen.findByText(/仅支持 DailyRadarSnapshot 2.2/)).toBeInTheDocument();
   });
 
   it("marks snapshots older than 24 hours as stale", async () => {

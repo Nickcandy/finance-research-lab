@@ -1,5 +1,5 @@
 import { Ban, CheckCircle2, CircleDashed, Star } from "lucide-react";
-import type { CandidateGroups, RadarCandidate, VerificationStatus } from "../types/radar";
+import type { CandidateGroups, ScoredRadarCandidate, VerificationStatus } from "../types/radar";
 import { CandidateRow } from "./CandidateRow";
 
 interface CandidateQueueProps {
@@ -9,7 +9,7 @@ interface CandidateQueueProps {
 interface GroupProps {
   title: string;
   description: string;
-  candidates: RadarCandidate[];
+  candidates: ScoredRadarCandidate[];
   status: VerificationStatus;
 }
 

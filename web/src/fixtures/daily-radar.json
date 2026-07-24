@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.1",
+  "schema_version": "2.2",
   "run": {
     "id": "20260716T153400+0800",
     "event_catalog_id": "20260716T153400+0800",
@@ -46,7 +46,11 @@
     "excluded_count": 1,
     "source_count": 7,
     "alert_count": 1,
-    "research_candidate_count": 1
+    "research_candidate_count": 1,
+    "critical_event_count": 1,
+    "high_event_count": 1,
+    "verify_first_count": 1,
+    "scoring_version": "1.0"
   },
   "events": [
     {
@@ -73,7 +77,12 @@
       ],
       "overall_direction": "positive",
       "impact_score": 28,
-      "confidence": "high",
+      "confidence": 82,
+      "report_confidence": "high",
+      "event_importance": 86,
+      "importance_level": "high",
+      "analysis_tier": "pro",
+      "reason_codes": ["critical:high_magnitude_high_confidence", "analysis_tier:pro"],
       "reasoning": "多来源确认产品上线，但产业链收入传导仍处于早期。",
       "value_chain": {
         "payer": "电商商家",
@@ -384,7 +393,35 @@
         "impact_strength": "high",
         "impact_direction": "positive",
         "impact_score": 80,
-        "confidence": "high",
+        "confidence": 88,
+        "positive_magnitude": 84,
+        "negative_magnitude": 18,
+        "conflict_score": 18,
+        "priority_level": "critical",
+        "analysis_tier": "pro",
+        "feature_breakdown": {
+          "positive": {
+            "directness": {
+              "value": 100,
+              "reason_codes": ["directness:official_announcement"],
+              "evidence_refs": ["claim:fixture-order"]
+            },
+            "economic_scale": {
+              "value": 80,
+              "reason_codes": ["economic_scale:reported_ratio"],
+              "evidence_refs": ["claim:fixture-order"]
+            }
+          },
+          "negative": {},
+          "confidence": {
+            "source_quality": {
+              "value": 95,
+              "reason_codes": ["source:company_announcement"],
+              "evidence_refs": ["item:fixture-announcement"]
+            }
+          }
+        },
+        "reason_codes": ["critical:high_magnitude_high_confidence", "analysis_tier:pro"],
         "verification_status": "verified",
         "verification_source": "公司公告 + 财报 + BaoStock 行情",
         "watchlist_hit": true,
@@ -405,7 +442,24 @@
         "impact_strength": "medium",
         "impact_direction": "positive",
         "impact_score": 45,
-        "confidence": "medium",
+        "confidence": 42,
+        "positive_magnitude": 68,
+        "negative_magnitude": 12,
+        "conflict_score": 12,
+        "priority_level": "verify_first",
+        "analysis_tier": "pro",
+        "feature_breakdown": {
+          "positive": {
+            "directness": {
+              "value": 70,
+              "reason_codes": ["directness:value_chain"],
+              "evidence_refs": ["claim:fixture-saas"]
+            }
+          },
+          "negative": {},
+          "confidence": {}
+        },
+        "reason_codes": ["verify_first:high_magnitude_low_confidence"],
         "verification_status": "unverified",
         "verification_source": "",
         "watchlist_hit": false,

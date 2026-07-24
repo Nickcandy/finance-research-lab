@@ -43,7 +43,12 @@ export function EventCard({ event }: EventCardProps) {
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <ImpactBadge kind="direction" value={event.overall_direction} label="总体方向" />
           <ImpactBadge kind="score" value={event.impact_score} />
-          <ImpactBadge kind="confidence" value={event.confidence} />
+          <span className="rounded-full border border-info/20 bg-info-soft px-2.5 py-1 text-[11px] font-semibold text-info">
+            证据置信度：{event.confidence}
+          </span>
+          <span className="rounded-full border border-line bg-surface-muted px-2.5 py-1 text-[11px] font-semibold text-ink-muted">
+            {event.analysis_tier}
+          </span>
           <span className="rounded-full border border-brand/15 bg-brand-soft px-2.5 py-1 text-[11px] font-semibold text-brand">
             {event.event_type}
           </span>
