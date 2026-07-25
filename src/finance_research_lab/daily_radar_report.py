@@ -13,6 +13,7 @@ from .impact_scoring import (
 )
 from .models import MarketEvent, ResearchReport, StockImpact
 from .impact_assessment import ImpactAssessment
+from .impact_horizon import DirectionalHorizons, ImpactHorizon
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 PENDING_SECTION = "暂无（Task 5/6 尚未接入）"
@@ -166,12 +167,7 @@ def _scored_sections(
         ),
     )
     stock_lines = [
-        (
-            f"- {names.get(symbol, symbol)}（{symbol}）：正向 "
-            f"{max(item.positive_magnitude for item in assessments)} / 负向 "
-            f"{max(item.negative_magnitude for item in assessments)} / 置信度 "
-            f"{max(item.confidence for item in assessments)}"
-        )
+        _stock_score_line(names.get(symbol, symbol), symbol, assessments)
         for symbol, assessments in stock_rows
     ]
     verify_lines = [
@@ -182,7 +178,8 @@ def _scored_sections(
     risk_lines = [
         (
             f"- {names.get(symbol, symbol)}（{symbol}）：负向影响 "
-            f"{max(item.negative_magnitude for item in assessments)}"
+            f"{max(item.negative_magnitude for item in assessments)}；"
+            f"{_format_horizon_summary(_strongest_negative(assessments).negative_horizon)}"
         )
         for symbol, assessments in stock_rows
         if symbol in watchlist and max(item.negative_magnitude for item in assessments) >= 60
@@ -193,6 +190,84 @@ def _scored_sections(
         "\n".join(verify_lines) or "暂无",
         "\n".join(risk_lines) or "暂无",
     )
+
+
+def _stock_score_line(
+    name: str,
+    symbol: str,
+    assessments: list[ImpactAssessment],
+) -> str:
+    positive = max(assessments, key=lambda item: item.positive_magnitude)
+    negative = _strongest_negative(assessments)
+    return (
+        f"- {name}（{symbol}）：正向 {positive.positive_magnitude} / 负向 "
+        f"{negative.negative_magnitude} / 置信度 "
+        f"{max(item.confidence for item in assessments)}；"
+        f"正向周期：{_format_horizon_summary(positive.positive_horizon)}；"
+        f"负向周期：{_format_horizon_summary(negative.negative_horizon)}"
+    )
+
+
+def render_impact_horizon_section(
+    assessments: Sequence[ImpactAssessment],
+    names: dict[str, str],
+) -> str:
+    grouped: dict[str, list[ImpactAssessment]] = {}
+    for assessment in assessments:
+        if assessment.symbol:
+            grouped.setdefault(assessment.symbol, []).append(assessment)
+    if not grouped:
+        return "## 影响周期\n\n暂无可验证周期。"
+    lines = []
+    for symbol, values in sorted(grouped.items()):
+        positive = max(values, key=lambda item: item.positive_magnitude)
+        negative = _strongest_negative(values)
+        lines.append(
+            f"- {names.get(symbol, symbol)}（{symbol}）："
+            f"正向周期 {_format_horizon_summary(positive.positive_horizon)}；"
+            f"负向周期 {_format_horizon_summary(negative.negative_horizon)}"
+        )
+    return "## 影响周期\n\n" + "\n".join(lines)
+
+
+def _strongest_negative(
+    assessments: list[ImpactAssessment],
+) -> ImpactAssessment:
+    return max(assessments, key=lambda item: item.negative_magnitude)
+
+
+def _format_horizon_summary(horizons: DirectionalHorizons | None) -> str:
+    if horizons is None:
+        return "周期待验证"
+    conditions = "；".join(horizons.fundamental.invalidation_conditions)
+    return (
+        f"市场反应 {_format_horizon(horizons.market)} / "
+        f"基本面兑现 {_format_horizon(horizons.fundamental)} / "
+        f"周期置信度 {horizons.fundamental.confidence} / "
+        f"依据 {'；'.join(horizons.fundamental.basis)} / "
+        f"失效条件 {conditions}"
+    )
+
+
+def _format_horizon(horizon: ImpactHorizon) -> str:
+    labels = {
+        "immediate": "即时",
+        "short": "短期",
+        "medium": "中期",
+        "long": "长期",
+        "structural": "结构性",
+        "unknown": "待验证",
+    }
+    if horizon.category == "unknown":
+        return labels[horizon.category]
+    unit = "个交易日" if horizon.unit == "trading_day" else "个月"
+    if horizon.max_duration is None:
+        duration = f"{horizon.min_duration}{unit}以上"
+    elif horizon.min_duration == horizon.max_duration:
+        duration = f"{horizon.min_duration}{unit}"
+    else:
+        duration = f"{horizon.min_duration}～{horizon.max_duration}{unit}"
+    return f"{labels[horizon.category]}（{duration}）"
 
 
 def _report_company_context(

@@ -66,8 +66,15 @@ describe("TodayPage", () => {
     expect(within(verifiedGroup!).getByText("正向 84")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("负向 18")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("置信度：88")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("正向周期：长期")).toBeInTheDocument();
     await user.click(within(verifiedGroup!).getByText("宁德时代"));
     expect(within(verifiedGroup!).getByText(/贸易政策变化/)).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("市场反应：短期（6～20个交易日）")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText(/市场层依据：/)).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("基本面兑现：长期（6～24个月）")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText(/基本面层失效条件：/)).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText(/原文明确周期：2026-2028/)).toBeInTheDocument();
+    expect(screen.getAllByText("负向周期：中期").length).toBeGreaterThan(0);
 
     await user.click(screen.getAllByText("查看事实、来源与风险")[0]!);
     expect(screen.getAllByRole("link", { name: /来源 1/ })[0]).toHaveAttribute("href", expect.stringContaining("example.com"));
@@ -114,7 +121,7 @@ describe("TodayPage", () => {
     })));
     renderPage();
 
-    expect(await screen.findByText(/仅支持 DailyRadarSnapshot 2.2/)).toBeInTheDocument();
+    expect(await screen.findByText(/仅支持 DailyRadarSnapshot 2.3/)).toBeInTheDocument();
   });
 
   it("marks snapshots older than 24 hours as stale", async () => {

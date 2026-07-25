@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
+from .impact_horizon import DirectionalHorizons
 from .models import ImpactDirection
 
 SCORING_VERSION = "1.1"
@@ -62,6 +63,8 @@ class ImpactAssessment:
     event_features: EventImportanceFeatures
     positive_features: StockImpactFeatures | None
     negative_features: StockImpactFeatures | None
+    positive_horizon: DirectionalHorizons | None
+    negative_horizon: DirectionalHorizons | None
     confidence_features: ConfidenceFeatures
     priority_level: PriorityLevel
     analysis_tier: AnalysisTier
@@ -205,6 +208,8 @@ def build_impact_assessment(
     positive_features: StockImpactFeatures | None,
     negative_features: StockImpactFeatures | None,
     confidence_features: ConfidenceFeatures,
+    positive_horizon: DirectionalHorizons | None = None,
+    negative_horizon: DirectionalHorizons | None = None,
     official_major_announcement: bool = False,
     watchlist_hit: bool = False,
     hard_risk: bool = False,
@@ -268,6 +273,8 @@ def build_impact_assessment(
         event_features=event_features,
         positive_features=positive_features,
         negative_features=negative_features,
+        positive_horizon=positive_horizon,
+        negative_horizon=negative_horizon,
         confidence_features=confidence_features,
         priority_level=priority_level,
         analysis_tier=analysis_tier,

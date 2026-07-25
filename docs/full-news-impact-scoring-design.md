@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：设计完成，尚未实施
-- 目标版本：V2.2
+- 状态：V2.3 已实施
+- 当前版本：V2.3
 - 适用入口：`daily-radar`、单事件按需分析
 - 关联文档：
   - [`cost-aware-evidence-pipeline-plan.md`](cost-aware-evidence-pipeline-plan.md)：全量 Claim、证据账本、Flash/Pro 成本与路由
@@ -433,6 +433,21 @@ economic_scale = min(rule_based_estimate, 50)
 | 半年至一年 | 55～75 |
 | 多年合同、产能或制度变化 | 75～90 |
 | 长期结构性壁垒变化 | 90～100 |
+
+`duration` 继续只参与现有影响幅度计算，权重保持 15%。从 Snapshot v2.3 开始，系统另外输出
+可解释的影响周期，不用一个分数代替时间判断：
+
+```text
+positive_horizon / negative_horizon
+  market       # 市场反应周期，单位为交易日
+  fundamental  # 基本面兑现周期，单位为自然月
+```
+
+每层周期包含分类、最小/最大持续时间、置信度、判断依据、Claim 引用和失效条件。分类为
+`immediate / short / medium / long / structural / unknown`。明确合同期限、政策有效期、交付期、
+建设期或量产期优先；其次使用 Claim 周期；再其次使用事件类型默认值。证据不足时必须输出
+`unknown`，禁止推算具体结束日期。正向和负向周期独立保存，跨事件聚合时分别跟随正向或负向
+影响幅度最高的 assessment。
 
 ### 7.6 `sensitivity`
 

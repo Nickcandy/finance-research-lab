@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.2",
+  "schema_version": "2.3",
   "run": {
     "id": "20260716T153400+0800",
     "event_catalog_id": "20260716T153400+0800",
@@ -108,7 +108,9 @@
           "themes": ["电商 SaaS"],
           "reasoning": "商家数字化投入可能外溢至第三方 SaaS，但尚无订单证据。",
           "evidence": [],
-          "risks": ["平台自研工具可能挤压第三方需求"]
+          "risks": ["平台自研工具可能挤压第三方需求"],
+          "positive_horizon": null,
+          "negative_horizon": null
         },
         {
           "symbol": "300766.SZ",
@@ -126,7 +128,9 @@
           "themes": ["数据智能"],
           "reasoning": "可能受企业 AI 主题映射影响，业务相关性待核实。",
           "evidence": [],
-          "risks": ["仅有主题映射，缺少直接业务关系"]
+          "risks": ["仅有主题映射，缺少直接业务关系"],
+          "positive_horizon": null,
+          "negative_horizon": null
         }
       ],
       "analysis_status": "succeeded",
@@ -178,7 +182,9 @@
           "themes": ["动力电池", "海外产能"],
           "reasoning": "海外客户和产能布局与事件方向直接相关。",
           "evidence": ["公司披露海外收入保持增长", "最新财报现金流与盈利能力可核验"],
-          "risks": ["贸易政策变化", "海外扩产爬坡不及预期"]
+          "risks": ["贸易政策变化", "海外扩产爬坡不及预期"],
+          "positive_horizon": null,
+          "negative_horizon": null
         }
       ],
       "analysis_status": "succeeded",
@@ -229,7 +235,9 @@
           "themes": ["稀土资源"],
           "reasoning": "主营与稀土价格直接相关，但最新公告与成交量证据尚未补齐。",
           "evidence": ["主营业务相关性已确认"],
-          "risks": ["价格上涨持续性不足", "下游需求弱于预期"]
+          "risks": ["价格上涨持续性不足", "下游需求弱于预期"],
+          "positive_horizon": null,
+          "negative_horizon": null
         }
       ],
       "analysis_status": "succeeded",
@@ -280,7 +288,9 @@
           "themes": ["CXO"],
           "reasoning": "海外业务敞口相关，需等待公司公告和正式政策文本。",
           "evidence": [],
-          "risks": ["政策解读可能过度", "事件尚未形成实际订单影响"]
+          "risks": ["政策解读可能过度", "事件尚未形成实际订单影响"],
+          "positive_horizon": null,
+          "negative_horizon": null
         }
       ],
       "analysis_status": "succeeded",
@@ -328,7 +338,9 @@
           "themes": ["券商"],
           "reasoning": "仅有板块情绪映射，缺少公司层面证据。",
           "evidence": [],
-          "risks": ["成交额回落", "情绪映射快速退潮"]
+          "risks": ["成交额回落", "情绪映射快速退潮"],
+          "positive_horizon": null,
+          "negative_horizon": null
         },
         {
           "symbol": "000681.SZ",
@@ -346,7 +358,9 @@
           "themes": [],
           "reasoning": "名称和市场热词造成误匹配，主营与券商链路无关。",
           "evidence": ["主营业务不属于证券行业"],
-          "risks": []
+          "risks": [],
+          "positive_horizon": null,
+          "negative_horizon": null
         }
       ],
       "analysis_status": "succeeded",
@@ -428,7 +442,30 @@
         "themes": ["动力电池", "海外产能"],
         "reasoning": "海外客户和产能布局与事件方向直接相关。",
         "evidence": ["公司披露海外收入保持增长", "最新财报现金流与盈利能力可核验"],
-        "risks": ["贸易政策变化", "海外扩产爬坡不及预期"]
+        "risks": ["贸易政策变化", "海外扩产爬坡不及预期"],
+        "positive_horizon": {
+          "market": {
+            "category": "short",
+            "min_duration": 6,
+            "max_duration": 20,
+            "unit": "trading_day",
+            "confidence": "medium",
+            "basis": ["订单 / 合同事件默认市场反应周期"],
+            "evidence_refs": ["claim:fixture-order"],
+            "invalidation_conditions": ["合同取消、延期或金额下调"]
+          },
+          "fundamental": {
+            "category": "long",
+            "min_duration": 6,
+            "max_duration": 24,
+            "unit": "calendar_month",
+            "confidence": "high",
+            "basis": ["原文明确周期：2026-2028"],
+            "evidence_refs": ["claim:fixture-order"],
+            "invalidation_conditions": ["合同取消、延期或金额下调", "交付或收入确认明显低于预期"]
+          }
+        },
+        "negative_horizon": null
       }
     ],
     "unverified": [
@@ -466,7 +503,9 @@
         "themes": ["电商 SaaS"],
         "reasoning": "商家数字化投入可能外溢至第三方 SaaS，但尚无订单证据。",
         "evidence": [],
-        "risks": ["平台自研工具可能挤压第三方需求"]
+        "risks": ["平台自研工具可能挤压第三方需求"],
+        "positive_horizon": null,
+        "negative_horizon": null
       },
       {
         "symbol": "300766.SZ",
@@ -485,7 +524,9 @@
         "themes": ["数据智能"],
         "reasoning": "可能受企业 AI 主题映射影响，业务相关性待核实。",
         "evidence": [],
-        "risks": ["仅有主题映射，缺少直接业务关系"]
+        "risks": ["仅有主题映射，缺少直接业务关系"],
+        "positive_horizon": null,
+        "negative_horizon": null
       },
       {
         "symbol": "600111.SH",
@@ -504,7 +545,9 @@
         "themes": ["稀土资源"],
         "reasoning": "主营与稀土价格直接相关，但最新公告与成交量证据尚未补齐。",
         "evidence": ["主营业务相关性已确认"],
-        "risks": ["价格上涨持续性不足", "下游需求弱于预期"]
+        "risks": ["价格上涨持续性不足", "下游需求弱于预期"],
+        "positive_horizon": null,
+        "negative_horizon": null
       },
       {
         "symbol": "603259.SH",
@@ -523,7 +566,9 @@
         "themes": ["CXO"],
         "reasoning": "海外业务敞口相关，需等待公司公告和正式政策文本。",
         "evidence": [],
-        "risks": ["政策解读可能过度", "事件尚未形成实际订单影响"]
+        "risks": ["政策解读可能过度", "事件尚未形成实际订单影响"],
+        "positive_horizon": null,
+        "negative_horizon": null
       },
       {
         "symbol": "601059.SH",
@@ -542,7 +587,9 @@
         "themes": ["券商"],
         "reasoning": "仅有板块情绪映射，缺少公司层面证据。",
         "evidence": [],
-        "risks": ["成交额回落", "情绪映射快速退潮"]
+        "risks": ["成交额回落", "情绪映射快速退潮"],
+        "positive_horizon": null,
+        "negative_horizon": null
       }
     ],
     "excluded": [
@@ -563,7 +610,9 @@
         "themes": [],
         "reasoning": "名称和市场热词造成误匹配，主营与券商链路无关。",
         "evidence": ["主营业务不属于证券行业"],
-        "risks": []
+        "risks": [],
+        "positive_horizon": null,
+        "negative_horizon": null
       }
     ],
     "watchlist": [
@@ -584,7 +633,9 @@
         "themes": ["动力电池"],
         "reasoning": "海外客户和产能布局与事件方向直接相关。",
         "evidence": ["公司披露海外收入保持增长"],
-        "risks": ["贸易政策变化"]
+        "risks": ["贸易政策变化"],
+        "positive_horizon": null,
+        "negative_horizon": null
       },
       {
         "symbol": "600111.SH",
@@ -603,7 +654,9 @@
         "themes": ["稀土资源"],
         "reasoning": "主营相关，证据尚未补齐。",
         "evidence": ["主营业务相关性已确认"],
-        "risks": ["价格持续性不足"]
+        "risks": ["价格持续性不足"],
+        "positive_horizon": null,
+        "negative_horizon": null
       }
     ]
   },
@@ -621,7 +674,29 @@
       "reasoning": "市场风险偏好回落可能放大金融持仓波动。",
       "evidence": ["Watchlist 与事件暴露关系已核验"],
       "risks": ["事件影响可能快速消退"],
-      "generated_at": "2026-07-16T15:05:00+08:00"
+      "generated_at": "2026-07-16T15:05:00+08:00",
+      "negative_horizon": {
+        "market": {
+          "category": "short",
+          "min_duration": 6,
+          "max_duration": 20,
+          "unit": "trading_day",
+          "confidence": "medium",
+          "basis": ["风险事件默认市场反应周期"],
+          "evidence_refs": ["claim:fixture-risk"],
+          "invalidation_conditions": ["风险事项解除、整改完成或影响范围被证伪"]
+        },
+        "fundamental": {
+          "category": "medium",
+          "min_duration": 3,
+          "max_duration": 6,
+          "unit": "calendar_month",
+          "confidence": "medium",
+          "basis": ["风险事件默认基本面兑现周期"],
+          "evidence_refs": ["claim:fixture-risk"],
+          "invalidation_conditions": ["风险事项解除、整改完成或影响范围被证伪"]
+        }
+      }
     }
   ],
   "research_candidates": [
@@ -644,7 +719,30 @@
       "themes": ["动力电池", "海外产能"],
       "reasoning": "海外客户和产能布局与事件方向直接相关。",
       "evidence": ["公司披露海外收入保持增长"],
-      "risks": ["贸易政策变化"]
+      "risks": ["贸易政策变化"],
+      "positive_horizon": {
+        "market": {
+          "category": "short",
+          "min_duration": 6,
+          "max_duration": 20,
+          "unit": "trading_day",
+          "confidence": "medium",
+          "basis": ["订单 / 合同事件默认市场反应周期"],
+          "evidence_refs": ["claim:fixture-order"],
+          "invalidation_conditions": ["合同取消、延期或金额下调"]
+        },
+        "fundamental": {
+          "category": "long",
+          "min_duration": 6,
+          "max_duration": 24,
+          "unit": "calendar_month",
+          "confidence": "high",
+          "basis": ["原文明确周期：2026-2028"],
+          "evidence_refs": ["claim:fixture-order"],
+          "invalidation_conditions": ["合同取消、延期或金额下调", "交付或收入确认明显低于预期"]
+        }
+      },
+      "negative_horizon": null
     }
   ],
   "validation_tasks": [

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 import pytest
@@ -25,6 +25,7 @@ from finance_research_lab.impact_assessment import (
     StockImpactFeatures,
     build_impact_assessment,
 )
+from finance_research_lab.impact_horizon import DirectionalHorizons, ImpactHorizon
 from finance_research_lab.models import (
     EventAnalysis,
     MarketEvent,
@@ -109,7 +110,7 @@ def test_build_daily_radar_snapshot_exposes_stable_frontend_contract() -> None:
         generated_at=window_end,
     )
 
-    assert snapshot["schema_version"] == "2.2"
+    assert snapshot["schema_version"] == "2.3"
     assert snapshot["run"]["id"] == "20260716T120000+0800"
     assert snapshot["run"]["window_start"] == "2026-07-15T12:00:00+08:00"
     assert snapshot["summary"] == {
@@ -353,6 +354,7 @@ def test_snapshot_builds_watchlist_alerts_and_research_candidates() -> None:
         "evidence": ["公司公告"],
         "risks": ["恢复时间待确认"],
         "generated_at": "2026-07-16T12:00:00+08:00",
+        "negative_horizon": None,
     }
     assert snapshot["summary"]["research_candidate_count"] == 1
     assert [item["symbol"] for item in snapshot["research_candidates"]] == ["300308.SZ"]
@@ -404,7 +406,7 @@ def test_snapshot_write_is_atomic_and_read_validates_schema(tmp_path) -> None:
         read_daily_radar_snapshot(path)
 
 
-def test_snapshot_v22_exposes_routes_and_keeps_max_positive_and_negative() -> None:
+def test_snapshot_v23_exposes_routes_and_keeps_max_positive_and_negative() -> None:
     first_news = NewsItem(
         "中际旭创获得重大订单",
         "公司公告",
@@ -482,10 +484,76 @@ def test_snapshot_v22_exposes_routes_and_keeps_max_positive_and_negative() -> No
         "fixture:evidence"
         in candidate["feature_breakdown"]["positive"]["directness"]["evidence_refs"]
     )
+    assert candidate["positive_horizon"]["market"]["category"] == "short"
+    assert candidate["positive_horizon"]["fundamental"]["category"] == "long"
+    assert candidate["negative_horizon"]["market"]["category"] == "immediate"
+    assert candidate["negative_horizon"]["fundamental"]["category"] == "medium"
+
+
+def test_watchlist_alert_keeps_current_event_negative_horizon() -> None:
+    first_news = NewsItem(
+        "第一项风险",
+        "公司公告",
+        published_at="2026-07-16T11:00:00+08:00",
+        source_type="announcement",
+    )
+    second_news = NewsItem(
+        "第二项风险",
+        "公司公告",
+        published_at="2026-07-16T10:00:00+08:00",
+        source_type="announcement",
+    )
+    events = (
+        MarketEvent(first_news.headline, (first_news,)),
+        MarketEvent(second_news.headline, (second_news,)),
+    )
+    first = replace(
+        _assessment(events[0], positive=0, negative=80, confidence=80),
+        negative_horizon=_horizons("immediate", "medium"),
+    )
+    second = replace(
+        _assessment(events[1], positive=0, negative=75, confidence=80),
+        negative_horizon=_horizons("long", "long"),
+    )
+    routed = (
+        _Routed(events[0], AnalysisRouter().route(first), (first,)),
+        _Routed(events[1], AnalysisRouter().route(second), (second,)),
+    )
+    impact = StockImpact(
+        "300308.SZ",
+        "中际旭创",
+        "A股",
+        "negative",
+        "high",
+        verification_status="verified",
+        watchlist_hit=True,
+        impact_direction="negative",
+        confidence="high",
+    )
+    start = datetime(2026, 7, 15, 12, tzinfo=SHANGHAI)
+    end = datetime(2026, 7, 16, 12, tzinfo=SHANGHAI)
+
+    snapshot = build_daily_radar_snapshot(
+        events,
+        (_report(first_news, (impact,)), _report(second_news, (impact,))),
+        (),
+        start,
+        end,
+        generated_at=end,
+        routed_analyses=routed,
+    )
+
+    alerts = {alert["event_id"]: alert for alert in snapshot["alerts"]}
+    assert alerts[market_event_id(events[0])]["negative_horizon"]["market"][
+        "category"
+    ] == "immediate"
+    assert alerts[market_event_id(events[1])]["negative_horizon"]["market"][
+        "category"
+    ] == "long"
 
 
 @pytest.mark.parametrize("invalid", [True, -1, 101, 1.5, "80"])
-def test_snapshot_v22_rejects_invalid_zero_to_hundred_values(invalid) -> None:
+def test_snapshot_v23_rejects_invalid_zero_to_hundred_values(invalid) -> None:
     payload = _minimal_snapshot()
     payload["events"] = [
         {
@@ -544,7 +612,7 @@ def _report(news: NewsItem, impacts: tuple[StockImpact, ...]) -> ResearchReport:
 
 def _minimal_snapshot() -> dict[str, object]:
     return {
-        "schema_version": "2.2",
+        "schema_version": "2.3",
         "run": {
             "id": "20260716T120000+0800",
             "event_catalog_id": "20260716T120000+0800",
@@ -626,6 +694,8 @@ def _assessment(
         ),
         positive_features=stock(positive),
         negative_features=stock(negative),
+        positive_horizon=_horizons("short", "long") if positive else None,
+        negative_horizon=_horizons("immediate", "medium") if negative else None,
         confidence_features=ConfidenceFeatures(
             source_quality=_score(confidence),
             corroboration=_score(confidence),
@@ -633,4 +703,33 @@ def _assessment(
             quantitative_completeness=_score(confidence),
             consistency=_score(confidence),
         ),
+    )
+
+
+def _horizons(market: str, fundamental: str) -> DirectionalHorizons:
+    ranges = {
+        "immediate": (0, 5, "trading_day"),
+        "short": (6, 20, "trading_day"),
+        "medium": (3, 6, "calendar_month"),
+        "long": (6, 24, "calendar_month"),
+    }
+
+    def horizon(category: str, *, layer: str) -> ImpactHorizon:
+        minimum, maximum, unit = ranges[category]
+        if layer == "fundamental" and unit == "trading_day":
+            unit = "calendar_month"
+        return ImpactHorizon(
+            category=category,  # type: ignore[arg-type]
+            min_duration=minimum,
+            max_duration=maximum,
+            unit=unit,  # type: ignore[arg-type]
+            confidence="medium",
+            basis=("fixture basis",),
+            evidence_refs=("claim:fixture",),
+            invalidation_conditions=("fixture invalidation",),
+        )
+
+    return DirectionalHorizons(
+        market=horizon(market, layer="market"),
+        fundamental=horizon(fundamental, layer="fundamental"),
     )

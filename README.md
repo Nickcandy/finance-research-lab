@@ -47,7 +47,7 @@
 → 全量 Claim / EvidenceLedger / ImpactAssessment
 → AnalysisRouter 分配 Pro / Flash / deterministic
 → 重要事件使用 AkShare 公司证据 + BaoStock / AkShare 行情校验
-→ Snapshot v2.2 + Markdown + point-in-time 归档
+→ Snapshot v2.3 + Markdown + point-in-time 归档
 ```
 
 URL 手动深挖辅助入口：
@@ -71,7 +71,7 @@ URL 手动深挖辅助入口：
 当前实现已经包含无 URL 的 `daily-radar` 主入口，以及 `trace-news`、`radar` 和 `research-agent`
 三个 URL 手动研究入口。当前链路会处理同花顺最近 24 小时的全部可研究新闻，完成事件聚类、Claim
 提取、证据账本、影响评分、分层分析、A 股候选发现和证据校验，并输出固定 Markdown 日报和
-`DailyRadarSnapshot v2.2`。
+`DailyRadarSnapshot v2.3`。
 
 系统会把只描述个股涨跌、涨跌停、成交额或市值且没有原因的新闻标记为“纯行情播报”：它仍保留在
 `/events`，但标记为 `not_applicable`。`/today` 展示重大事件、重点股票、高影响待核验、
@@ -205,8 +205,12 @@ Vite 会把 `/api` 转发到本地 Python 服务；刷新按钮只重新读取�
 
 `daily-radar` 会对全部可研究事件生成 Claim、证据账本、影响评分和分析路由；只有
 `critical / verify_first / high` 进入 Pro 深度分析，其余走 Flash 或规则摘要。运行同时写入
-`DailyRadarSnapshot v2.2`、完整 event catalog、单事件分析产物和按 run ID / scoring version
+`DailyRadarSnapshot v2.3`、完整 event catalog、单事件分析产物和按 run ID / scoring version
 隔离的 point-in-time 归档。纯行情播报保留在事件目录，但标记为 `not_applicable`。
+
+每个“事件—股票—方向”同时输出市场反应周期和基本面兑现周期，包含即时、短期、中期、长期、
+结构性或待验证分类、预计区间、周期置信度、依据和失效条件。周期只用于研究与复盘，不改变当前
+影响分公式和 Pro / Flash 路由，也不表示股价会在整个区间内持续上涨或下跌。
 
 生成最近 24 小时的 Event-driven 日报：
 

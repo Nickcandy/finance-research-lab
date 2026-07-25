@@ -85,6 +85,7 @@ class MarketEventAnalysisOutcome:
     report: ResearchReport
     steps: tuple[AgentStep, ...]
     warnings: tuple[str, ...]
+    assessments: tuple[ImpactAssessment, ...]
 
 
 @dataclass(frozen=True)
@@ -543,6 +544,7 @@ def run_daily_radar_workflow(
                 report,
                 event_steps,
                 snapshot["events"][index - 1]["warnings"],
+                assessments=routed_analyses[index - 1].assessments,
                 run_id=snapshot["run"]["id"],
                 event_id=event_id,
                 rank=index,
@@ -764,7 +766,40 @@ def run_market_event_analysis(
     if report is None:
         message = steps[-1].summary if steps else "market event analysis failed"
         raise RuntimeError(message)
-    return MarketEventAnalysisOutcome(report, tuple(steps), tuple(warnings))
+    try:
+        claim_result = ClaimPipeline(
+            llm_client,
+            Path(evidence_cache_path) / "claims",
+        ).extract((event,))
+        ledgers = build_evidence_ledgers(
+            (event,),
+            claim_result.claims,
+            universe_result.output,
+            watchlist_symbols=(item.symbol for item in watchlist_result.output),
+        )
+        assessments = build_impact_assessments(
+            (event,),
+            ledgers,
+            universe_result.output,
+        )
+    except Exception as exc:
+        assessments = ()
+        warnings.append(f"impact horizon unavailable: {exc}")
+        score_result = ToolResult("score_event_impact", "error", (), str(exc))
+    else:
+        score_result = ToolResult(
+            "score_event_impact",
+            "success",
+            assessments,
+            "；".join(claim_result.warnings),
+        )
+    steps.append(_step("score_event_impact", score_result))
+    return MarketEventAnalysisOutcome(
+        report,
+        tuple(steps),
+        tuple(warnings),
+        assessments,
+    )
 
 
 def _analyze_market_event(

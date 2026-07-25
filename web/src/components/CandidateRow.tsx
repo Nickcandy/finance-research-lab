@@ -1,6 +1,7 @@
 import { ChevronRight, ShieldAlert, Star } from "lucide-react";
 import type { ImpactStrength, RadarCandidate, ScoredRadarCandidate } from "../types/radar";
 import { ImpactBadge } from "./ImpactBadge";
+import { HorizonBadges, HorizonDetails } from "./ImpactHorizon";
 import { StatusBadge } from "./StatusBadge";
 
 interface CandidateRowProps {
@@ -52,6 +53,7 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
             {typeof candidate.confidence === "number"
               ? <span className="rounded-full border border-info/20 bg-info-soft px-2.5 py-1 text-[11px] font-semibold text-info">置信度：{candidate.confidence}</span>
               : <ImpactBadge kind="confidence" value={candidate.confidence} />}
+            <HorizonBadges positive={candidate.positive_horizon} negative={candidate.negative_horizon} />
           </div>
         </div>
         <ChevronRight className="mt-2 size-4 shrink-0 text-ink-muted transition group-open:rotate-90" aria-hidden="true" />
@@ -64,6 +66,7 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
           </div>
           <p className="mt-3">{candidate.reasoning || "暂无研究理由"}</p>
           {candidate.verification_source && <p className="mt-2 text-brand">证据源：{candidate.verification_source}</p>}
+          <HorizonDetails positive={candidate.positive_horizon} negative={candidate.negative_horizon} />
           {candidate.risks.length > 0 && (
             <div className="mt-3 flex gap-2 rounded-lg bg-risk-soft px-3 py-2 text-risk">
               <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />

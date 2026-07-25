@@ -9,6 +9,24 @@ export type EventExclusionReason = "" | "pure_stock_price_update";
 export type PriorityLevel = "critical" | "verify_first" | "high" | "medium" | "low";
 export type AnalysisTier = "pro" | "flash" | "deterministic" | "not_applicable";
 export type ImportanceLevel = "high" | "medium" | "low";
+export type HorizonCategory = "immediate" | "short" | "medium" | "long" | "structural" | "unknown";
+export type DurationUnit = "trading_day" | "calendar_month" | "unknown";
+
+export interface ImpactHorizon {
+  category: HorizonCategory;
+  min_duration: number | null;
+  max_duration: number | null;
+  unit: DurationUnit;
+  confidence: ConfidenceLevel;
+  basis: string[];
+  evidence_refs: string[];
+  invalidation_conditions: string[];
+}
+
+export interface DirectionalHorizons {
+  market: ImpactHorizon;
+  fundamental: ImpactHorizon;
+}
 
 export interface RadarStep {
   step_name: string;
@@ -74,6 +92,8 @@ export interface RadarCandidate {
   reasoning: string;
   evidence: string[];
   risks: string[];
+  positive_horizon: DirectionalHorizons | null;
+  negative_horizon: DirectionalHorizons | null;
 }
 
 export interface FeatureScore {
@@ -133,6 +153,7 @@ export interface RadarAlert {
   evidence: string[];
   risks: string[];
   generated_at: string;
+  negative_horizon: DirectionalHorizons | null;
 }
 
 export interface RadarEvent {
@@ -185,7 +206,7 @@ export interface RadarEventSummary {
 }
 
 export interface EventAnalysisResponse {
-  schema_version?: "1.0";
+  schema_version?: "1.1";
   run_id: string;
   event_id: string;
   status: "queued" | "running" | "succeeded" | "failed";
@@ -212,7 +233,7 @@ export interface CandidateGroups {
 }
 
 export interface RadarSnapshot {
-  schema_version: "2.2";
+  schema_version: "2.3";
   run: RadarRun;
   summary: RadarSummary;
   events: RadarEvent[];

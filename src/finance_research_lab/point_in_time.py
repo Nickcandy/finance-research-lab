@@ -10,13 +10,16 @@ from typing import Any, Protocol
 
 from .claim_pipeline import stable_news_item_id
 from .claims import Claim
-from .daily_radar_snapshot import market_event_id
+from .daily_radar_snapshot import (
+    market_event_id,
+    validate_directional_horizon_payload,
+)
 from .evidence_ledger import build_evidence_ledgers
 from .impact_assessment import ImpactAssessment, SCORING_VERSION
 from .impact_features import build_impact_assessments
 from .models import AShareCompany, MarketEvent
 
-PIT_SCHEMA_VERSION = "1.0"
+PIT_SCHEMA_VERSION = "1.1"
 
 
 class ImmutablePointInTimeError(RuntimeError):
@@ -236,6 +239,16 @@ def _signal_payload(assessment: ImpactAssessment) -> dict[str, Any]:
             else {},
             "confidence": _json_value(asdict(assessment.confidence_features)),
         },
+        "positive_horizon": (
+            _json_value(asdict(assessment.positive_horizon))
+            if assessment.positive_horizon is not None
+            else None
+        ),
+        "negative_horizon": (
+            _json_value(asdict(assessment.negative_horizon))
+            if assessment.negative_horizon is not None
+            else None
+        ),
         "reason_codes": list(assessment.reason_codes),
         "scoring_version": assessment.scoring_version,
     }
@@ -276,6 +289,15 @@ def _validate_signal(
             raise ValueError(f"invalid point-in-time signals.{index}.{field}")
     if signal.get("scoring_version") != scoring_version:
         raise ValueError(f"invalid point-in-time signals.{index}.scoring_version")
+    for field in ("positive_horizon", "negative_horizon"):
+        if field not in signal:
+            raise ValueError(f"missing point-in-time signals.{index}.{field}")
+        horizon = signal[field]
+        if horizon is not None:
+            validate_directional_horizon_payload(
+                horizon,
+                f"point-in-time signals.{index}.{field}",
+            )
     if signal.get("priority_level") not in {
         "critical",
         "verify_first",

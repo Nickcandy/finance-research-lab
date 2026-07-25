@@ -85,12 +85,22 @@ def test_event_analysis_runs_in_background_and_serves_markdown(tmp_path, monkeyp
 
     def fake_generate(event, **kwargs):
         payload = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "run_id": kwargs["run_id"],
             "event_id": kwargs["event_id"],
             "status": "succeeded",
             "generated_at": "2026-07-16T12:01:00+08:00",
-            "event": {"title": event.title},
+            "event": {
+                "title": event.title,
+                "event_importance": 50,
+                "confidence": 50,
+                "importance_level": "medium",
+                "analysis_tier": "flash",
+                "reason_codes": ["fixture"],
+                "overall_direction": "unknown",
+                "impact_score": None,
+                "candidates": [],
+            },
             "steps": [],
             "warnings": [],
             "error": "",
@@ -349,7 +359,7 @@ def _write_pure_price_event_radar(tmp_path) -> tuple[object, str]:
 
 def _snapshot() -> dict[str, object]:
     return {
-        "schema_version": "2.2",
+        "schema_version": "2.3",
         "run": {
             "id": "20260716T120000+0800",
             "event_catalog_id": "20260716T120000+0800",

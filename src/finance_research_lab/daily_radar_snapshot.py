@@ -21,9 +21,10 @@ from .impact_scoring import (
     summarize_event_impact,
 )
 from .impact_assessment import FeatureScore, ImpactAssessment, SCORING_VERSION
+from .impact_horizon import DirectionalHorizons, ImpactHorizon
 from .models import MarketEvent, ResearchReport, StockImpact
 
-SCHEMA_VERSION = "2.2"
+SCHEMA_VERSION = "2.3"
 DISCLAIMER = "研究辅助，不构成投资建议。"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _STRENGTH_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
@@ -35,7 +36,7 @@ _IMPORTANCE_LEVELS = {"high", "medium", "low"}
 
 
 class InvalidRadarSnapshot(ValueError):
-    """Raised when a persisted frontend snapshot violates the v2.2 contract."""
+    """Raised when a persisted frontend snapshot violates the v2.3 contract."""
 
 
 class RoutedAnalysis(Protocol):
@@ -302,9 +303,7 @@ def validate_daily_radar_snapshot(payload: object) -> dict[str, Any]:
     for index, event in enumerate(payload["events"]):
         if not isinstance(event, dict):
             raise InvalidRadarSnapshot(f"invalid events.{index}")
-        _validate_scored_event(event, f"events.{index}")
-        if not isinstance(event.get("candidates"), list):
-            raise InvalidRadarSnapshot(f"invalid events.{index}.candidates")
+        validate_radar_event_payload(event, f"events.{index}")
     for group_name in ("verified", "unverified", "excluded", "watchlist"):
         for index, candidate in enumerate(groups[group_name]):
             _validate_scored_candidate(
@@ -329,6 +328,20 @@ def validate_daily_radar_snapshot(payload: object) -> dict[str, Any]:
             raise InvalidRadarSnapshot(f"invalid all_events.{index}.analysis_status")
         if event.get("exclusion_reason") not in {"", "pure_stock_price_update"}:
             raise InvalidRadarSnapshot(f"invalid all_events.{index}.exclusion_reason")
+    return payload
+
+
+def validate_radar_event_payload(
+    payload: object,
+    path: str = "event",
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise InvalidRadarSnapshot(f"invalid {path}")
+    _validate_scored_event(payload, path)
+    if not isinstance(payload.get("candidates"), list):
+        raise InvalidRadarSnapshot(f"invalid {path}.candidates")
+    for index, candidate in enumerate(payload["candidates"]):
+        _validate_impact_fields(candidate, f"{path}.candidates.{index}")
     return payload
 
 
@@ -363,6 +376,8 @@ def _validate_scored_candidate(payload: object, path: str) -> None:
         raise InvalidRadarSnapshot(f"invalid {path}.feature_breakdown")
     if not isinstance(payload.get("reason_codes"), list):
         raise InvalidRadarSnapshot(f"invalid {path}.reason_codes")
+    _validate_directional_horizon_field(payload, "positive_horizon", path)
+    _validate_directional_horizon_field(payload, "negative_horizon", path)
 
 
 def _score_0_to_100(value: object, path: str) -> None:
@@ -387,6 +402,8 @@ def _validate_impact_fields(
         raise InvalidRadarSnapshot(f"invalid {path}.impact_score")
     if payload.get("confidence") not in _CONFIDENCES:
         raise InvalidRadarSnapshot(f"invalid {path}.confidence")
+    _validate_directional_horizon_field(payload, "positive_horizon", path)
+    _validate_directional_horizon_field(payload, "negative_horizon", path)
 
 
 def _validate_alert(payload: object, path: str) -> None:
@@ -403,6 +420,76 @@ def _validate_alert(payload: object, path: str) -> None:
         raise InvalidRadarSnapshot(f"invalid {path}.confidence")
     if payload.get("severity") not in {"high", "medium"}:
         raise InvalidRadarSnapshot(f"invalid {path}.severity")
+    _validate_directional_horizon_field(payload, "negative_horizon", path)
+
+
+def _validate_directional_horizon_field(
+    payload: dict[str, Any],
+    field: str,
+    path: str,
+) -> None:
+    if field not in payload:
+        raise InvalidRadarSnapshot(f"missing {path}.{field}")
+    value = payload[field]
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise InvalidRadarSnapshot(f"invalid {path}.{field}")
+    validate_directional_horizon_payload(value, f"{path}.{field}")
+
+
+def validate_directional_horizon_payload(payload: object, path: str) -> None:
+    if not isinstance(payload, dict):
+        raise InvalidRadarSnapshot(f"invalid {path}")
+    for layer in ("market", "fundamental"):
+        _validate_horizon(payload.get(layer), f"{path}.{layer}")
+
+
+def _validate_horizon(payload: object, path: str) -> None:
+    if not isinstance(payload, dict):
+        raise InvalidRadarSnapshot(f"invalid {path}")
+    category = payload.get("category")
+    if category not in {
+        "immediate",
+        "short",
+        "medium",
+        "long",
+        "structural",
+        "unknown",
+    }:
+        raise InvalidRadarSnapshot(f"invalid {path}.category")
+    unit = payload.get("unit")
+    if unit not in {"trading_day", "calendar_month", "unknown"}:
+        raise InvalidRadarSnapshot(f"invalid {path}.unit")
+    minimum = payload.get("min_duration")
+    maximum = payload.get("max_duration")
+    if category == "unknown":
+        if minimum is not None or maximum is not None or unit != "unknown":
+            raise InvalidRadarSnapshot(f"invalid {path} unknown duration")
+    else:
+        if (
+            isinstance(minimum, bool)
+            or not isinstance(minimum, int)
+            or minimum < 0
+            or unit == "unknown"
+        ):
+            raise InvalidRadarSnapshot(f"invalid {path}.min_duration")
+        if maximum is not None and (
+            isinstance(maximum, bool)
+            or not isinstance(maximum, int)
+            or maximum < minimum
+        ):
+            raise InvalidRadarSnapshot(f"invalid {path}.max_duration")
+    if payload.get("confidence") not in _CONFIDENCES:
+        raise InvalidRadarSnapshot(f"invalid {path}.confidence")
+    for field in ("basis", "evidence_refs", "invalidation_conditions"):
+        values = payload.get(field)
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(value, str) or not value.strip() for value in values)
+        ):
+            raise InvalidRadarSnapshot(f"invalid {path}.{field}")
 
 
 def _event_summary_payload(
@@ -509,6 +596,7 @@ def _event_payload(
         candidates = _event_candidates(report, routed, event_id)
 
     assessments = routed.assessments if routed is not None else ()
+    _attach_candidate_horizons(candidates, assessments)
     event_importance = max(
         (assessment.event_importance for assessment in assessments),
         default=0,
@@ -558,10 +646,13 @@ def build_radar_event_payload(
     event_id: str,
     rank: int,
     steps: Sequence[AgentStep],
+    assessments: Sequence[ImpactAssessment] = (),
 ) -> dict[str, Any]:
     """Build one analyzed event using the frontend event contract."""
 
-    return _event_payload(event, report, event_id, rank, steps)
+    payload = _event_payload(event, report, event_id, rank, steps)
+    _attach_candidate_horizons(payload["candidates"], assessments)
+    return payload
 
 
 def _candidate_groups(
@@ -640,6 +731,8 @@ def _attach_assessment_fields(
                         "analysis_tier": "deterministic",
                         "feature_breakdown": {},
                         "reason_codes": ["assessment:missing"],
+                        "positive_horizon": None,
+                        "negative_horizon": None,
                     }
                 )
                 continue
@@ -678,6 +771,12 @@ def _attach_assessment_fields(
                     },
                     "reason_codes": _unique(
                         reason for assessment in assessments for reason in assessment.reason_codes
+                    ),
+                    "positive_horizon": _directional_horizon_payload(
+                        positive.positive_horizon
+                    ),
+                    "negative_horizon": _directional_horizon_payload(
+                        negative.negative_horizon
                     ),
                 }
             )
@@ -866,6 +965,9 @@ def _watchlist_alerts(
                 "evidence": list(impact.evidence),
                 "risks": list(impact.risks),
                 "generated_at": generated_at.isoformat(timespec="seconds"),
+                "negative_horizon": _directional_horizon_payload(
+                    assessment.negative_horizon
+                ),
             }
             alerts.append(
                 (
@@ -945,6 +1047,7 @@ def _legacy_watchlist_alerts(
                     "evidence": list(impact.evidence),
                     "risks": list(impact.risks),
                     "generated_at": generated_at.isoformat(timespec="seconds"),
+                    "negative_horizon": None,
                 }
             )
     return alerts
@@ -1066,6 +1169,60 @@ def _impact_payload(impact: StockImpact, event_ids: list[str]) -> dict[str, Any]
         "reasoning": impact.reasoning,
         "evidence": list(impact.evidence),
         "risks": list(impact.risks),
+        "positive_horizon": None,
+        "negative_horizon": None,
+    }
+
+
+def _attach_candidate_horizons(
+    candidates: Sequence[dict[str, Any]],
+    assessments: Sequence[ImpactAssessment],
+) -> None:
+    assessments_by_symbol: dict[str, list[ImpactAssessment]] = {}
+    for assessment in assessments:
+        if assessment.symbol:
+            assessments_by_symbol.setdefault(assessment.symbol, []).append(assessment)
+    for candidate in candidates:
+        values = assessments_by_symbol.get(candidate["symbol"], ())
+        positive = (
+            max(values, key=lambda assessment: assessment.positive_magnitude)
+            if values
+            else None
+        )
+        negative = (
+            max(values, key=lambda assessment: assessment.negative_magnitude)
+            if values
+            else None
+        )
+        candidate["positive_horizon"] = _directional_horizon_payload(
+            positive.positive_horizon if positive is not None else None
+        )
+        candidate["negative_horizon"] = _directional_horizon_payload(
+            negative.negative_horizon if negative is not None else None
+        )
+
+
+def _directional_horizon_payload(
+    horizon: DirectionalHorizons | None,
+) -> dict[str, Any] | None:
+    if horizon is None:
+        return None
+    return {
+        "market": _horizon_payload(horizon.market),
+        "fundamental": _horizon_payload(horizon.fundamental),
+    }
+
+
+def _horizon_payload(horizon: ImpactHorizon) -> dict[str, Any]:
+    return {
+        "category": horizon.category,
+        "min_duration": horizon.min_duration,
+        "max_duration": horizon.max_duration,
+        "unit": horizon.unit,
+        "confidence": horizon.confidence,
+        "basis": list(horizon.basis),
+        "evidence_refs": list(horizon.evidence_refs),
+        "invalidation_conditions": list(horizon.invalidation_conditions),
     }
 
 

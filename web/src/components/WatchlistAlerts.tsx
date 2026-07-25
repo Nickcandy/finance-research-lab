@@ -1,6 +1,7 @@
 import { ShieldAlert } from "lucide-react";
 import type { RadarAlert } from "../types/radar";
 import { ImpactBadge } from "./ImpactBadge";
+import { HorizonBadges } from "./ImpactHorizon";
 
 interface WatchlistAlertsProps {
   alerts: RadarAlert[];
@@ -31,6 +32,7 @@ export function WatchlistAlerts({ alerts }: WatchlistAlertsProps) {
               <ImpactBadge kind="direction" value={alert.direction} />
               <ImpactBadge kind="score" value={alert.impact_score} />
               <ImpactBadge kind="confidence" value={alert.confidence} />
+              <HorizonBadges positive={null} negative={alert.negative_horizon} />
             </div>
             <p className="mt-3 text-xs leading-5 text-ink">{alert.reasoning || "暂无风险说明"}</p>
           </a>

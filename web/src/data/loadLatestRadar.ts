@@ -19,9 +19,9 @@ export async function loadLatestRadar(): Promise<RadarSnapshot | null> {
     typeof payload !== "object"
     || payload === null
     || !("schema_version" in payload)
-    || payload.schema_version !== "2.2"
+    || payload.schema_version !== "2.3"
   ) {
-    throw new Error("仅支持 DailyRadarSnapshot 2.2，请重新生成日报。");
+    throw new Error("仅支持 DailyRadarSnapshot 2.3，请重新生成日报。");
   }
   return payload as RadarSnapshot;
 }

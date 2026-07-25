@@ -7,13 +7,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .daily_radar_snapshot import SHANGHAI, build_radar_event_payload
+from .daily_radar_report import render_impact_horizon_section
+from .daily_radar_snapshot import (
+    SHANGHAI,
+    InvalidRadarSnapshot,
+    build_radar_event_payload,
+    validate_radar_event_payload,
+)
+from .impact_assessment import ImpactAssessment
 from .models import MarketEvent
 from .llm.chat_completions_client import ChatCompletionsClient
 from .llm.usage import LLMUsageSession, LLMUsageSummary, render_usage_markdown
 from .report import render_research_report
 
-ANALYSIS_SCHEMA_VERSION = "1.0"
+ANALYSIS_SCHEMA_VERSION = "1.1"
 
 
 class InvalidEventAnalysis(ValueError):
@@ -61,6 +68,7 @@ def generate_event_analysis(
         outcome.report,
         outcome.steps,
         outcome.warnings,
+        assessments=outcome.assessments,
         run_id=run_id,
         event_id=event_id,
         rank=rank,
@@ -75,6 +83,7 @@ def write_successful_event_analysis(
     steps: Any,
     warnings: Any,
     *,
+    assessments: tuple[ImpactAssessment, ...] = (),
     run_id: str,
     event_id: str,
     rank: int,
@@ -94,6 +103,7 @@ def write_successful_event_analysis(
             event_id,
             rank,
             steps,
+            assessments,
         ),
         "steps": [
             {
@@ -106,17 +116,26 @@ def write_successful_event_analysis(
         ],
         "warnings": list(warnings),
         "error": "",
-        "markdown": _analysis_markdown(report, usage_summary),
+        "markdown": _analysis_markdown(report, assessments, usage_summary),
     }
     write_event_analysis(payload, output_path)
     return payload
 
 
-def _analysis_markdown(report: Any, usage_summary: LLMUsageSummary | None) -> str:
+def _analysis_markdown(
+    report: Any,
+    assessments: tuple[ImpactAssessment, ...],
+    usage_summary: LLMUsageSummary | None,
+) -> str:
     markdown = render_research_report(report).rstrip()
+    names = {impact.symbol: impact.name for impact in report.stock_impacts}
+    horizon_section = render_impact_horizon_section(assessments, names)
     if usage_summary is None:
-        return f"{markdown}\n"
-    return f"{markdown}\n\n{render_usage_markdown(usage_summary)}\n"
+        return f"{markdown}\n\n{horizon_section}\n"
+    return (
+        f"{markdown}\n\n{horizon_section}\n\n"
+        f"{render_usage_markdown(usage_summary)}\n"
+    )
 
 
 def write_failed_event_analysis(
@@ -193,4 +212,9 @@ def validate_event_analysis(payload: object) -> dict[str, Any]:
         raise InvalidEventAnalysis("invalid event analysis steps or warnings")
     if payload["status"] == "succeeded" and not isinstance(payload.get("event"), dict):
         raise InvalidEventAnalysis("successful event analysis requires event")
+    if payload["status"] == "succeeded":
+        try:
+            validate_radar_event_payload(payload["event"])
+        except InvalidRadarSnapshot as exc:
+            raise InvalidEventAnalysis(f"invalid event analysis event: {exc}") from exc
     return payload

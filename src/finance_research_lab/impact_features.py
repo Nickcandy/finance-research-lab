@@ -17,6 +17,7 @@ from .impact_assessment import (
     build_impact_assessment,
     resolve_impact_direction,
 )
+from .impact_horizon import assess_directional_horizons, infer_event_kind
 from .models import AShareCompany, CompanyAnnouncement, FinancialSnapshot, MarketEvent
 from .value_chains import best_value_chain_relation, infer_value_chain_nodes
 
@@ -48,7 +49,7 @@ def derive_event_rule_features(
 ) -> EventRuleFeatures:
     if not claims:
         raise ValueError("claims must not be empty")
-    kind = _event_kind(claims)
+    kind = infer_event_kind(claims)
     if kind == "order":
         economic_scale = _order_scale(claims, financial_snapshots)
     elif kind == "earnings":
@@ -181,6 +182,16 @@ def build_impact_assessments(
                 event_features=event_features,
                 positive_features=positive_features,
                 negative_features=negative_features,
+                positive_horizon=assess_directional_horizons(
+                    event,
+                    ledger.supporting_claims,
+                    verified_relation=ledger.verified,
+                ),
+                negative_horizon=assess_directional_horizons(
+                    event,
+                    ledger.opposing_claims,
+                    verified_relation=ledger.verified,
+                ),
                 confidence_features=ledger.confidence_features,
                 official_major_announcement=official_announcement,
                 watchlist_hit=ledger.watchlist_hit,
@@ -649,27 +660,6 @@ def _immediacy(claims: Sequence[Claim], kind: str) -> FeatureScore:
         (f"immediacy:{claim.time_horizon}",),
         (f"claim:{claim.id}",),
     )
-
-
-def _event_kind(claims: Sequence[Claim]) -> str:
-    text = " ".join(claim.event_type for claim in claims)
-    if any(marker in text for marker in ("订单", "合同")):
-        return "order"
-    if any(marker in text for marker in ("业绩", "指引", "财务")):
-        return "earnings"
-    if any(marker in text for marker in ("回购", "减持", "控制权", "增发")):
-        return "corporate_action"
-    if any(marker in text for marker in ("风险", "诉讼", "处罚", "停产")):
-        return "risk"
-    if any(marker in text for marker in ("资本开支", "扩产")):
-        return "capex"
-    if any(marker in text for marker in ("涨价", "供需", "商品")):
-        return "commodity"
-    if any(marker in text for marker in ("政策", "监管")):
-        return "policy"
-    if any(marker in text for marker in ("获批", "研发", "临床", "产品")):
-        return "approval"
-    return "unknown"
 
 
 def _ratio_scale(value: float) -> int:

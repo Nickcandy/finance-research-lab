@@ -56,6 +56,10 @@ def test_point_in_time_is_immutable_and_versioned(tmp_path) -> None:
     assert payload["events"][0]["claim_ids"] == [claims[0].id]
     assert payload["signals"][0]["symbol"] == company.symbol
     assert payload["signals"][0]["positive_magnitude"] > 0
+    assert payload["schema_version"] == "1.1"
+    assert payload["signals"][0]["positive_horizon"]["market"]["category"] == "long"
+    assert payload["signals"][0]["positive_horizon"]["fundamental"]["category"] == "long"
+    assert payload["signals"][0]["negative_horizon"] is None
     assert payload["result_labels_path"].endswith("/result-labels.json")
 
     changed = {**payload, "generated_at": "2026-07-24T09:01:00+08:00"}
@@ -102,6 +106,22 @@ def test_point_in_time_rejects_identity_mismatch(tmp_path) -> None:
     path = point_in_time_path(tmp_path / "daily-radar.json", "run-b", "1.0")
 
     with pytest.raises(ValueError, match="identity"):
+        write_point_in_time(payload, path)
+
+
+def test_point_in_time_rejects_invalid_nested_horizon(tmp_path) -> None:
+    events, claims, _, routed = _fixture()
+    payload = build_point_in_time_payload(
+        run_id="run-a",
+        generated_at="2026-07-24T09:00:00+08:00",
+        events=events,
+        claims=claims,
+        routed_analyses=routed,
+    )
+    payload["signals"][0]["positive_horizon"]["market"]["category"] = "invalid"
+    path = point_in_time_path(tmp_path / "daily-radar.json", "run-a", "1.0")
+
+    with pytest.raises(ValueError, match="positive_horizon.market.category"):
         write_point_in_time(payload, path)
 
 

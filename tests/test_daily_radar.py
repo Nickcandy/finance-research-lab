@@ -376,6 +376,9 @@ def test_daily_radar_workflow_verifies_candidates_with_company_and_market_eviden
     assert "## 9. 重点股票榜" in markdown
     assert "## 10. 高影响待核验" in markdown
     assert "## 11. Watchlist 风险预警" in markdown
+    assert "正向周期：市场反应" in markdown
+    assert "基本面兑现" in markdown
+    assert "失效条件" in markdown
     assert "影响分表示研究优先级，不是收益预测" in markdown
 
 
@@ -558,7 +561,7 @@ def test_daily_radar_workflow_writes_optional_frontend_snapshot(tmp_path, monkey
     assert run.steps[-1].step_name == "write_snapshot"
     assert run.steps[-1].status == "success"
     payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "2.2"
+    assert payload["schema_version"] == "2.3"
     assert payload["events"][0]["analysis_tier"] == "pro"
     assert payload["events"][0]["event_importance"] >= 0
     assert payload["summary"]["scoring_version"] == "1.1"
