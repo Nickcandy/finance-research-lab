@@ -21,7 +21,8 @@ const featureLabels: Record<string, string> = {
 };
 
 export function ImpactCandidate({ candidate }: { candidate: ScoredRadarCandidate }) {
-  const features = featureEntries(candidate.feature_breakdown.positive);
+  const positiveFeatures = featureEntries(candidate.feature_breakdown.positive);
+  const negativeFeatures = featureEntries(candidate.feature_breakdown.negative);
   return (
     <details className="group border-b border-line last:border-0">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-3">
@@ -39,7 +40,20 @@ export function ImpactCandidate({ candidate }: { candidate: ScoredRadarCandidate
           <ChevronDown className="size-4 text-ink-muted transition group-open:rotate-180" />
         </div>
       </summary>
-      <div className="grid gap-2 pb-3 sm:grid-cols-2">
+      <div className="grid gap-3 pb-3 sm:grid-cols-2">
+        <FeatureSection title="正向特征" features={positiveFeatures} />
+        <FeatureSection title="负向特征" features={negativeFeatures} />
+      </div>
+    </details>
+  );
+}
+
+function FeatureSection({ title, features }: { title: string; features: [string, FeatureScore][] }) {
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-semibold text-ink-muted">{title}</p>
+      <div className="space-y-2">
+        {features.length === 0 && <p className="rounded-lg bg-canvas px-3 py-2 text-xs text-ink-muted">暂无</p>}
         {features.map(([name, feature]) => (
           <div key={name} className="rounded-lg bg-canvas px-3 py-2 text-xs">
             <div className="flex justify-between gap-2">
@@ -51,7 +65,7 @@ export function ImpactCandidate({ candidate }: { candidate: ScoredRadarCandidate
           </div>
         ))}
       </div>
-    </details>
+    </div>
   );
 }
 

@@ -372,7 +372,7 @@ def _snapshot() -> dict[str, object]:
             "critical_event_count": 0,
             "high_event_count": 0,
             "verify_first_count": 0,
-            "scoring_version": "1.0",
+            "scoring_version": "1.1",
         },
         "events": [],
         "all_events": [],

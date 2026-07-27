@@ -50,7 +50,7 @@
     "critical_event_count": 1,
     "high_event_count": 1,
     "verify_first_count": 1,
-    "scoring_version": "1.0"
+    "scoring_version": "1.1"
   },
   "events": [
     {

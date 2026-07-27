@@ -42,7 +42,9 @@ export function EventCard({ event }: EventCardProps) {
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <ImpactBadge kind="direction" value={event.overall_direction} label="总体方向" />
-          <ImpactBadge kind="score" value={event.impact_score} />
+          <span className="rounded-full border border-brand/20 bg-brand-soft px-2.5 py-1 text-[11px] font-semibold text-brand">
+            事件重要度：{event.event_importance}
+          </span>
           <span className="rounded-full border border-info/20 bg-info-soft px-2.5 py-1 text-[11px] font-semibold text-info">
             证据置信度：{event.confidence}
           </span>
@@ -62,9 +64,13 @@ export function EventCard({ event }: EventCardProps) {
           )}
         </div>
 
-        {event.value_chain.chain_steps.length > 0 && (
-          <div className="mt-5 rounded-lg bg-canvas px-4 py-3">
-            <p className="text-[10px] font-semibold tracking-[0.14em] text-ink-muted">VALUE CHAIN</p>
+        <div className="mt-5 rounded-lg bg-canvas px-4 py-3">
+            <p className="text-[10px] font-semibold tracking-[0.14em] text-ink-muted">
+              {event.value_chain.chain_steps.length >= 2 ? "VALUE CHAIN" : event.value_chain.chain_steps.length === 1 ? "已识别产业节点" : "价值链"}
+            </p>
+            {event.value_chain.chain_steps.length === 0 ? (
+              <p className="mt-2 text-xs text-ink-muted">未识别到可验证价值链</p>
+            ) : (
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-ink">
               {event.value_chain.chain_steps.map((step, index) => (
                 <span key={`${step}-${index}`} className="contents">
@@ -75,14 +81,18 @@ export function EventCard({ event }: EventCardProps) {
                 </span>
               ))}
             </div>
+            )}
+            {event.value_chain.reasoning && <p className="mt-2 text-[11px] leading-5 text-ink-muted">{event.value_chain.reasoning}</p>}
           </div>
-        )}
 
         {event.warnings.length > 0 && (
-          <div className="mt-4 flex gap-2 rounded-lg border border-warning/15 bg-warning-soft/70 px-3 py-2.5 text-xs leading-5 text-warning">
+          <details className="group mt-4 rounded-lg border border-warning/15 bg-warning-soft/70 px-3 py-2.5 text-xs leading-5 text-warning">
+            <summary className="flex cursor-pointer list-none gap-2">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>{event.warnings[0]}</span>
-          </div>
+            <span>{event.warnings[0]}{event.warnings.length > 1 && `（另 ${event.warnings.length - 1} 条）`}</span>
+            </summary>
+            {event.warnings.length > 1 && <ul className="mt-2 space-y-1 pl-6">{event.warnings.slice(1).map((warning) => <li key={warning}>· {warning}</li>)}</ul>}
+          </details>
         )}
 
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4 text-xs text-ink-muted">

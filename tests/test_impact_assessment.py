@@ -276,7 +276,7 @@ def test_build_assessment_keeps_breakdown_and_is_repeatable() -> None:
     second = build_impact_assessment(**inputs)
 
     assert first == second
-    assert first.scoring_version == SCORING_VERSION == "1.0"
+    assert first.scoring_version == SCORING_VERSION == "1.1"
     assert first.event_importance == 78
     assert first.positive_magnitude == 89
     assert first.negative_magnitude == 0

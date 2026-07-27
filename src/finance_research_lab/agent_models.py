@@ -30,6 +30,7 @@ class AgentStep:
     tool_name: str
     status: ToolStatus
     summary: str
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

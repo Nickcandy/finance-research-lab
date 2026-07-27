@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import tempfile
 import unicodedata
 from collections.abc import Iterable, Sequence
@@ -27,7 +26,6 @@ from .models import MarketEvent, ResearchReport, StockImpact
 SCHEMA_VERSION = "2.2"
 DISCLAIMER = "研究辅助，不构成投资建议。"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-_WARNING_WORDS = ("fallback", "warning", "unavailable", "失败", "不可用", "异常", "纠正")
 _STRENGTH_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
 _IMPACT_DIRECTIONS = {"positive", "negative", "mixed", "neutral", "unknown"}
 _CONFIDENCES = {"high", "medium", "low", "unknown"}
@@ -45,10 +43,11 @@ class RoutedAnalysis(Protocol):
     assessments: tuple[ImpactAssessment, ...]
     fallback: str
     warnings: tuple[str, ...]
+    brief: Any
+    report: ResearchReport | None
 
     @property
-    def route(self) -> Any:
-        ...
+    def route(self) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -88,9 +87,7 @@ def build_daily_radar_snapshot(
     generated_at = _shanghai_time(generated_at or datetime.now(SHANGHAI))
 
     event_ids = [market_event_id(event) for event in events]
-    routed_by_event = {
-        market_event_id(routed.event): routed for routed in routed_analyses
-    }
+    routed_by_event = {market_event_id(routed.event): routed for routed in routed_analyses}
     event_payloads = [
         _event_payload(
             event,
@@ -104,8 +101,21 @@ def build_daily_radar_snapshot(
     ]
     candidate_groups = _candidate_groups(events, reports, event_ids)
     _attach_assessment_fields(candidate_groups, routed_analyses)
-    alerts = _watchlist_alerts(events, reports, event_ids, generated_at)
-    research_candidates = _research_candidates(events, reports, event_ids)
+    if routed_analyses:
+        alerts = _watchlist_alerts(
+            routed_analyses,
+            reports,
+            event_ids,
+            generated_at,
+        )
+        research_candidates = _research_candidates(candidate_groups)
+    else:
+        alerts = _legacy_watchlist_alerts(events, reports, event_ids, generated_at)
+        research_candidates = _legacy_research_candidates(
+            events,
+            reports,
+            event_ids,
+        )
     validation_tasks = _validation_tasks(reports, event_ids)
     warnings = _unique(
         [
@@ -113,14 +123,7 @@ def build_daily_radar_snapshot(
             *(
                 warning
                 for routed in routed_analyses
-                for warning in (
-                    *routed.warnings,
-                    *(
-                        (f"{market_event_id(routed.event)} fallback:{routed.fallback}",)
-                        if routed.fallback
-                        else ()
-                    ),
-                )
+                for warning in routed.warnings
             ),
         ]
     )
@@ -180,15 +183,13 @@ def build_daily_radar_snapshot(
             "alert_count": len(alerts),
             "research_candidate_count": len(research_candidates),
             "critical_event_count": sum(
-                routed.route.priority_level == "critical"
-                for routed in routed_analyses
+                routed.route.priority_level == "critical" for routed in routed_analyses
             ),
             "high_event_count": sum(
                 routed.route.priority_level == "high" for routed in routed_analyses
             ),
             "verify_first_count": sum(
-                routed.route.priority_level == "verify_first"
-                for routed in routed_analyses
+                routed.route.priority_level == "verify_first" for routed in routed_analyses
             ),
             "scoring_version": SCORING_VERSION,
         },
@@ -466,7 +467,7 @@ def _event_payload(
         if step.step_name.endswith(f":{rank}")
         for warning in _step_warnings(step)
     )
-    if report is None:
+    if report is None and routed is None:
         warnings = _unique([*warnings, "事件分析失败，详见运行步骤。"])
         event_type = "待判断"
         themes: list[str] = []
@@ -484,26 +485,28 @@ def _event_payload(
         }
         candidates: list[dict[str, Any]] = []
     else:
-        impact_summary = summarize_event_impact(report)
-        event_type = report.event.event_type
-        themes = list(report.event.themes)
-        key_facts = list(report.event.key_facts)
-        report_confidence = report.event.confidence
-        overall_direction = impact_summary.direction
-        impact_score = impact_summary.score
-        reasoning = report.event.reasoning
+        brief = getattr(routed, "brief", None) if routed is not None else None
+        impact_summary = summarize_event_impact(report) if report is not None else None
+        event_type = brief.event_type if brief is not None else report.event.event_type
+        themes = list(brief.themes if brief is not None else report.event.themes)
+        key_facts = list(brief.key_facts if brief is not None else report.event.key_facts)
+        report_confidence = report.event.confidence if report is not None else "low"
+        overall_direction, impact_score = _event_assessment_impact(
+            routed.assessments if routed is not None else ()
+        )
+        if routed is None and impact_summary is not None:
+            overall_direction = impact_summary.direction
+            impact_score = impact_summary.score
+        reasoning = brief.reasoning if brief is not None else report.event.reasoning
+        chain = brief.value_chain if brief is not None else report.value_chain
         value_chain = {
-            "payer": report.value_chain.payer,
-            "receiver": report.value_chain.receiver,
-            "chain_steps": list(report.value_chain.chain_steps),
-            "direction": report.value_chain.impact_direction,
-            "reasoning": report.value_chain.reasoning,
+            "payer": chain.payer,
+            "receiver": chain.receiver,
+            "chain_steps": list(chain.chain_steps),
+            "direction": chain.impact_direction,
+            "reasoning": chain.reasoning,
         }
-        candidates = [
-            _impact_payload(impact, [event_id])
-            for impact in report.stock_impacts
-            if impact.market == "A股"
-        ]
+        candidates = _event_candidates(report, routed, event_id)
 
     assessments = routed.assessments if routed is not None else ()
     event_importance = max(
@@ -514,26 +517,13 @@ def _event_payload(
         (assessment.confidence for assessment in assessments),
         default=0,
     )
-    analysis_tier = (
-        routed.route.analysis_tier if routed is not None else "deterministic"
-    )
+    analysis_tier = routed.route.analysis_tier if routed is not None else "deterministic"
     reason_codes = (
         list(routed.route.reason_codes)
         if routed is not None
         else ["route:deterministic", "route:missing_assessment"]
     )
-    routed_warnings = (
-        [
-            *routed.warnings,
-            *(
-                (f"analysis fallback: {routed.fallback}",)
-                if routed.fallback
-                else ()
-            ),
-        ]
-        if routed is not None
-        else []
-    )
+    routed_warnings = list(routed.warnings) if routed is not None else []
     return {
         "id": event_id,
         "rank": rank,
@@ -623,9 +613,7 @@ def _attach_assessment_fields(
     for routed in routed_analyses:
         for assessment in routed.assessments:
             if assessment.symbol:
-                assessments_by_symbol.setdefault(assessment.symbol, []).append(
-                    assessment
-                )
+                assessments_by_symbol.setdefault(assessment.symbol, []).append(assessment)
     tier_order = {"pro": 0, "flash": 1, "deterministic": 2, "not_applicable": 3}
     priority_order = {
         "critical": 0,
@@ -680,28 +668,27 @@ def _attach_assessment_fields(
                     "positive_magnitude": positive.positive_magnitude,
                     "negative_magnitude": negative.negative_magnitude,
                     "confidence": confidence.confidence,
-                    "conflict_score": max(
-                        assessment.conflict_score for assessment in assessments
-                    ),
+                    "conflict_score": max(assessment.conflict_score for assessment in assessments),
                     "priority_level": strongest_priority.priority_level,
                     "analysis_tier": strongest_tier.analysis_tier,
                     "feature_breakdown": {
-                        "positive": _stock_feature_payload(
-                            positive.positive_features
-                        ),
-                        "negative": _stock_feature_payload(
-                            negative.negative_features
-                        ),
-                        "confidence": _confidence_feature_payload(
-                            confidence
-                        ),
+                        "positive": _stock_feature_payload(positive.positive_features),
+                        "negative": _stock_feature_payload(negative.negative_features),
+                        "confidence": _confidence_feature_payload(confidence),
                     },
                     "reason_codes": _unique(
-                        reason
-                        for assessment in assessments
-                        for reason in assessment.reason_codes
+                        reason for assessment in assessments for reason in assessment.reason_codes
                     ),
                 }
+            )
+            direction = combine_impact_directions(
+                assessment.direction for assessment in assessments
+            )
+            candidate["impact_direction"] = direction
+            candidate["impact_score"] = _signed_score(
+                direction,
+                positive.positive_magnitude,
+                negative.negative_magnitude,
             )
 
 
@@ -751,31 +738,118 @@ def _importance_level(value: int) -> str:
     return "low"
 
 
+def _event_assessment_impact(
+    assessments: Sequence[ImpactAssessment],
+) -> tuple[str, int | None]:
+    if not assessments:
+        return "unknown", None
+    direction = combine_impact_directions(assessment.direction for assessment in assessments)
+    positive = max(
+        (assessment.positive_magnitude for assessment in assessments),
+        default=0,
+    )
+    negative = max(
+        (assessment.negative_magnitude for assessment in assessments),
+        default=0,
+    )
+    return direction, _signed_score(direction, positive, negative)
+
+
+def _signed_score(direction: str, positive: int, negative: int) -> int | None:
+    if direction == "positive":
+        return positive
+    if direction == "negative":
+        return -negative
+    if direction == "neutral":
+        return 0
+    return None
+
+
+def _event_candidates(
+    report: ResearchReport | None,
+    routed: RoutedAnalysis | None,
+    event_id: str,
+) -> list[dict[str, Any]]:
+    if report is None:
+        return []
+    impacts = {impact.symbol: impact for impact in report.stock_impacts}
+    if routed is None:
+        return [
+            _impact_payload(impact, [event_id])
+            for impact in report.stock_impacts
+            if impact.market == "A股"
+        ]
+    candidates: list[dict[str, Any]] = []
+    for assessment in routed.assessments:
+        impact = impacts.get(assessment.symbol)
+        if impact is None or impact.market != "A股":
+            continue
+        payload = _impact_payload(impact, [event_id])
+        payload.update(
+            {
+                "impact_direction": assessment.direction,
+                "impact_score": _signed_score(
+                    assessment.direction,
+                    assessment.positive_magnitude,
+                    assessment.negative_magnitude,
+                ),
+                "positive_magnitude": assessment.positive_magnitude,
+                "negative_magnitude": assessment.negative_magnitude,
+                "confidence_score": assessment.confidence,
+                "feature_breakdown": {
+                    "positive": _stock_feature_payload(assessment.positive_features),
+                    "negative": _stock_feature_payload(assessment.negative_features),
+                    "confidence": _confidence_feature_payload(assessment),
+                },
+                "reason_codes": list(assessment.reason_codes),
+            }
+        )
+        candidates.append(payload)
+    return candidates
+
+
+def _confidence_label(value: int) -> str:
+    if value >= 70:
+        return "high"
+    if value >= 45:
+        return "medium"
+    return "low"
+
+
 def _watchlist_alerts(
-    events: Sequence[MarketEvent],
+    routed_analyses: Sequence[RoutedAnalysis],
     reports: Sequence[ResearchReport | None],
     event_ids: Sequence[str],
     generated_at: datetime,
 ) -> list[dict[str, Any]]:
     alerts: list[tuple[tuple[int, int, float, str], dict[str, Any]]] = []
-    for event, report, event_id in zip(events, reports, event_ids):
+    reports_by_event = dict(zip(event_ids, reports))
+    for routed in routed_analyses:
+        event = routed.event
+        event_id = market_event_id(event)
+        report = getattr(routed, "report", None) or reports_by_event.get(event_id)
         if report is None:
             continue
-        for impact in report.stock_impacts:
+        impacts = {impact.symbol: impact for impact in report.stock_impacts}
+        for assessment in routed.assessments:
+            impact = impacts.get(assessment.symbol)
             if not (
-                impact.market == "A股"
+                impact is not None
+                and impact.market == "A股"
                 and impact.watchlist_hit
                 and impact.verification_status == "verified"
-                and impact.impact_direction in {"negative", "mixed"}
-                and impact.impact_strength in {"medium", "high"}
+                and assessment.direction in {"negative", "mixed"}
+                and assessment.negative_magnitude >= 35
             ):
                 continue
-            score = stock_impact_score(impact)
+            score = _signed_score(
+                assessment.direction,
+                assessment.positive_magnitude,
+                assessment.negative_magnitude,
+            )
             severity = (
                 "high"
-                if impact.impact_direction == "negative"
-                and impact.impact_strength == "high"
-                and impact.confidence in {"medium", "high"}
+                if assessment.negative_magnitude >= 60 and assessment.confidence >= 50
                 else "medium"
             )
             payload = {
@@ -784,9 +858,9 @@ def _watchlist_alerts(
                 "event_title": event.title,
                 "symbol": impact.symbol,
                 "name": impact.name,
-                "direction": impact.impact_direction,
+                "direction": assessment.direction,
                 "impact_score": score,
-                "confidence": impact.confidence,
+                "confidence": _confidence_label(assessment.confidence),
                 "severity": severity,
                 "reasoning": impact.reasoning,
                 "evidence": list(impact.evidence),
@@ -809,20 +883,82 @@ def _watchlist_alerts(
 
 
 def _research_candidates(
+    groups: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    candidates = [
+        candidate.copy()
+        for candidate in groups["verified"]
+        if candidate["impact_direction"] == "positive" and candidate["positive_magnitude"] >= 35
+    ]
+    for candidate in candidates:
+        candidate["confidence_score"] = candidate["confidence"]
+        candidate["confidence"] = _confidence_label(candidate["confidence"])
+    candidates.sort(
+        key=lambda candidate: (
+            -candidate["positive_magnitude"],
+            -candidate["confidence_score"],
+            candidate["symbol"],
+        )
+    )
+    return candidates[:10]
+
+
+def _legacy_watchlist_alerts(
+    events: Sequence[MarketEvent],
+    reports: Sequence[ResearchReport | None],
+    event_ids: Sequence[str],
+    generated_at: datetime,
+) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    for event, report, event_id in zip(events, reports, event_ids):
+        if report is None:
+            continue
+        for impact in report.stock_impacts:
+            if not (
+                impact.market == "A股"
+                and impact.watchlist_hit
+                and impact.verification_status == "verified"
+                and impact.impact_direction in {"negative", "mixed"}
+                and impact.impact_strength in {"medium", "high"}
+            ):
+                continue
+            score = stock_impact_score(impact)
+            severity = (
+                "high"
+                if impact.impact_direction == "negative"
+                and impact.impact_strength == "high"
+                and impact.confidence in {"medium", "high"}
+                else "medium"
+            )
+            alerts.append(
+                {
+                    "id": f"alert_{hashlib.sha256(f'{event_id}|{impact.symbol}'.encode()).hexdigest()[:16]}",
+                    "event_id": event_id,
+                    "event_title": event.title,
+                    "symbol": impact.symbol,
+                    "name": impact.name,
+                    "direction": impact.impact_direction,
+                    "impact_score": score,
+                    "confidence": impact.confidence,
+                    "severity": severity,
+                    "reasoning": impact.reasoning,
+                    "evidence": list(impact.evidence),
+                    "risks": list(impact.risks),
+                    "generated_at": generated_at.isoformat(timespec="seconds"),
+                }
+            )
+    return alerts
+
+
+def _legacy_research_candidates(
     events: Sequence[MarketEvent],
     reports: Sequence[ResearchReport | None],
     event_ids: Sequence[str],
 ) -> list[dict[str, Any]]:
-    grouped: dict[str, list[_ImpactContext]] = {}
+    candidates: list[dict[str, Any]] = []
     for event, report, event_id in zip(events, reports, event_ids):
         if report is None:
             continue
-        source_count = len(
-            {
-                (item.source_type, item.source.strip() or item.source_type)
-                for item in event.items
-            }
-        )
         for impact in report.stock_impacts:
             if not (
                 impact.market == "A股"
@@ -830,82 +966,24 @@ def _research_candidates(
                 and impact.impact_direction == "positive"
                 and impact.impact_type in {"direct", "indirect"}
                 and impact.impact_strength in {"medium", "high"}
-                and stock_impact_score(impact) is not None
             ):
                 continue
-            grouped.setdefault(impact.symbol, []).append(
-                _ImpactContext(
-                    event_id,
-                    event.title,
-                    source_count,
-                    event.items[0].published_at,
-                    impact,
-                )
+            payload = _impact_payload(impact, [event_id])
+            payload.update(
+                {
+                    "event_titles": [event.title],
+                    "source_count": len(event.items),
+                    "latest_published_at": event.items[0].published_at,
+                }
             )
-
-    ranked: list[tuple[tuple[int, int, int, float, str], dict[str, Any]]] = []
-    confidence_order = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
-    for contexts in grouped.values():
-        selected = min(
-            contexts,
-            key=lambda context: (
-                -(stock_impact_score(context.impact) or 0),
-                -confidence_order[context.impact.confidence],
-                -context.source_count,
-                -_published_timestamp(context.latest_published_at),
-                context.impact.symbol,
-            ),
+            candidates.append(payload)
+    candidates.sort(
+        key=lambda candidate: (
+            -abs(candidate["impact_score"] or 0),
+            candidate["symbol"],
         )
-        payload = _impact_payload(
-            selected.impact,
-            _unique(context.event_id for context in contexts),
-        )
-        payload.update(
-            {
-                "event_titles": _unique(context.event_title for context in contexts),
-                "source_count": max(context.source_count for context in contexts),
-                "latest_published_at": max(
-                    context.latest_published_at for context in contexts
-                ),
-                "reasoning": "；".join(
-                    _unique(
-                        context.impact.reasoning
-                        for context in contexts
-                        if context.impact.reasoning
-                    )
-                ),
-                "evidence": _unique(
-                    evidence
-                    for context in contexts
-                    for evidence in context.impact.evidence
-                    if evidence
-                ),
-                "risks": _unique(
-                    risk
-                    for context in contexts
-                    for risk in context.impact.risks
-                    if risk
-                ),
-                "watchlist_hit": any(
-                    context.impact.watchlist_hit for context in contexts
-                ),
-            }
-        )
-        score = stock_impact_score(selected.impact) or 0
-        ranked.append(
-            (
-                (
-                    -score,
-                    -confidence_order[selected.impact.confidence],
-                    -selected.source_count,
-                    -_published_timestamp(selected.latest_published_at),
-                    selected.impact.symbol,
-                ),
-                payload,
-            )
-        )
-    ranked.sort(key=lambda item: item[0])
-    return [payload for _, payload in ranked[:10]]
+    )
+    return candidates[:10]
 
 
 def _aggregate_candidate(
@@ -917,11 +995,7 @@ def _aggregate_candidate(
         if context.impact.verification_status != "excluded"
         and context.impact.impact_type != "false_positive"
     ]
-    verified = [
-        context
-        for context in active
-        if context.impact.verification_status == "verified"
-    ]
+    verified = [context for context in active if context.impact.verification_status == "verified"]
     if verified:
         status = "verified"
         relevant = verified
@@ -940,9 +1014,7 @@ def _aggregate_candidate(
     payload = _impact_payload(selected, event_ids)
     directions = [context.impact.impact_direction for context in relevant]
     scores = [
-        score
-        for context in relevant
-        if (score := stock_impact_score(context.impact)) is not None
+        score for context in relevant if (score := stock_impact_score(context.impact)) is not None
     ]
     payload.update(
         {
@@ -955,14 +1027,10 @@ def _aggregate_candidate(
                     if context.impact.verification_source
                 )
             ),
-            "themes": _unique(
-                theme for context in relevant for theme in context.impact.themes
-            ),
+            "themes": _unique(theme for context in relevant for theme in context.impact.themes),
             "reasoning": "；".join(
                 _unique(
-                    context.impact.reasoning
-                    for context in relevant
-                    if context.impact.reasoning
+                    context.impact.reasoning for context in relevant if context.impact.reasoning
                 )
             ),
             "evidence": _unique(
@@ -974,9 +1042,7 @@ def _aggregate_candidate(
             "watchlist_hit": any(context.impact.watchlist_hit for context in contexts),
             "impact_direction": combine_impact_directions(directions),
             "impact_score": round(sum(scores) / len(scores)) if scores else None,
-            "confidence": strongest_confidence(
-                context.impact.confidence for context in relevant
-            ),
+            "confidence": strongest_confidence(context.impact.confidence for context in relevant),
         }
     )
     return payload, status
@@ -1042,17 +1108,9 @@ def market_event_id(event: MarketEvent) -> str:
 
 
 def _step_warnings(step: AgentStep) -> list[str]:
-    summary = step.summary.strip()
-    if not summary:
-        return []
     if step.status == "error":
-        return [summary]
-    parts = [part.strip() for part in re.split(r"[;；]\s*", summary) if part.strip()]
-    return [
-        part
-        for part in parts
-        if any(word in part.casefold() for word in _WARNING_WORDS)
-    ]
+        return [step.summary.strip()] if step.summary.strip() else []
+    return [warning for warning in step.warnings if warning.strip()]
 
 
 def _normalize(value: str) -> str:

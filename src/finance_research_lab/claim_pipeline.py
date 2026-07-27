@@ -18,7 +18,7 @@ from .claim_schema import (
     TIME_HORIZONS,
     ParsedClaim,
     claim_response_json_schema,
-    parse_claim_response,
+    parse_claim_response_partial,
 )
 from .claims import Claim, ClaimType, QuantitativeFact, TimeHorizon
 from .daily_radar_snapshot import market_event_id
@@ -57,8 +57,7 @@ class StructuredCompletionClient(Protocol):
         temperature: float = 0.2,
         timeout: int | None = None,
         scope_id: str = "",
-    ) -> LLMResponse:
-        ...
+    ) -> LLMResponse: ...
 
 
 @dataclass(frozen=True)
@@ -187,9 +186,7 @@ class ClaimPipeline:
                 ClaimBatchResult(
                     batch_index=batch_index,
                     item_count=len(batch),
-                    claim_count=sum(
-                        len(templates[group.content_hash]) for group in batch
-                    ),
+                    claim_count=sum(len(templates[group.content_hash]) for group in batch),
                     status=status,
                 )
             )
@@ -202,9 +199,7 @@ class ClaimPipeline:
                 group_templates = (_fallback_template(group.representative.item),)
                 fallback_hashes.add(group.content_hash)
             for event_id, entries in _entries_by_event(group.entries):
-                source_item_ids = tuple(
-                    dict.fromkeys(entry.item_id for entry in entries)
-                )
+                source_item_ids = tuple(dict.fromkeys(entry.item_id for entry in entries))
                 if group.content_hash in fallback_hashes:
                     fallback_count += 1
                 claims.extend(
@@ -231,29 +226,30 @@ class ClaimPipeline:
     ) -> tuple[dict[str, tuple[_ClaimTemplate, ...]], tuple[str, ...]]:
         if self.client is None:
             return {}, (f"claim batch {batch_index} fallback: LLM client unavailable",)
-        messages = _claim_messages(batch, self.body_char_limit)
-        expected_items = {
-            group.representative.item_id: group.representative.event_id
-            for group in batch
-        }
+        pending = batch
+        extracted: dict[str, tuple[_ClaimTemplate, ...]] = {}
         warnings: list[str] = []
         for attempt in range(2):
             try:
                 response = self.client.structured_completion(
-                    messages=messages,
+                    messages=_claim_messages(pending, self.body_char_limit),
                     schema_name="news_claims",
                     schema=claim_response_json_schema(),
                     temperature=0,
                     scope_id=f"claim-batch:{batch_index}",
                 )
-                parsed = parse_claim_response(response.content, expected_items)
-                return _templates_by_content_hash(parsed, batch), tuple(warnings)
+                clean, pending, issues = _partial_templates(response.content, pending)
+                extracted.update(clean)
+                if not pending:
+                    return extracted, tuple(warnings)
+                error = _issue_summary(issues, len(pending))
             except (RuntimeError, ValueError) as exc:
-                if attempt == 0:
-                    warnings.append(f"claim batch {batch_index} retry: {exc}")
-                    continue
-                warnings.append(f"claim batch {batch_index} fallback: {exc}")
-        return {}, tuple(warnings)
+                error = str(exc)
+            if attempt == 0:
+                warnings.append(f"claim batch {batch_index} retry: {error}")
+                continue
+            warnings.append(f"claim batch {batch_index} fallback: {error}")
+        return extracted, tuple(warnings)
 
 
 def stable_news_item_id(item: NewsItem) -> str:
@@ -301,8 +297,7 @@ def _content_groups(events: Sequence[MarketEvent]) -> tuple[_ContentGroup, ...]:
                 )
             )
     return tuple(
-        _ContentGroup(content_hash, tuple(entries))
-        for content_hash, entries in grouped.items()
+        _ContentGroup(content_hash, tuple(entries)) for content_hash, entries in grouped.items()
     )
 
 
@@ -337,23 +332,64 @@ def _templates_by_content_hash(
     claims: tuple[ParsedClaim, ...],
     batch: tuple[_ContentGroup, ...],
 ) -> dict[str, tuple[_ClaimTemplate, ...]]:
-    content_hash_by_item_id = {
-        group.representative.item_id: group.content_hash for group in batch
-    }
+    content_hash_by_item_id = {group.representative.item_id: group.content_hash for group in batch}
     grouped: dict[str, list[_ClaimTemplate]] = {}
     for claim in claims:
         content_hashes = {
-            content_hash_by_item_id[source_item_id]
-            for source_item_id in claim.source_item_ids
+            content_hash_by_item_id[source_item_id] for source_item_id in claim.source_item_ids
         }
         if len(content_hashes) != 1:
             raise ValueError("claim must reference one content group")
         content_hash = next(iter(content_hashes))
         grouped.setdefault(content_hash, []).append(_template_from_parsed(claim))
     return {
-        content_hash: tuple(group_templates)
-        for content_hash, group_templates in grouped.items()
+        content_hash: tuple(group_templates) for content_hash, group_templates in grouped.items()
     }
+
+
+def _partial_templates(
+    content: str,
+    batch: tuple[_ContentGroup, ...],
+) -> tuple[
+    dict[str, tuple[_ClaimTemplate, ...]],
+    tuple[_ContentGroup, ...],
+    tuple[str, ...],
+]:
+    expected_items = {
+        group.representative.item_id: group.representative.event_id for group in batch
+    }
+    parsed = parse_claim_response_partial(content, expected_items)
+    content_hash_by_item_id = {group.representative.item_id: group.content_hash for group in batch}
+    grouped: dict[str, list[_ClaimTemplate]] = {}
+    polluted: set[str] = set()
+    issues = [issue.error for issue in parsed.issues]
+    for issue in parsed.issues:
+        polluted.update(
+            content_hash_by_item_id[item_id]
+            for item_id in issue.source_item_ids
+            if item_id in content_hash_by_item_id
+        )
+    for claim in parsed.claims:
+        content_hashes = {content_hash_by_item_id[item_id] for item_id in claim.source_item_ids}
+        if len(content_hashes) != 1:
+            polluted.update(content_hashes)
+            issues.append("claim must reference one content group")
+            continue
+        content_hash = next(iter(content_hashes))
+        grouped.setdefault(content_hash, []).append(_template_from_parsed(claim))
+    clean = {
+        content_hash: tuple(values)
+        for content_hash, values in grouped.items()
+        if content_hash not in polluted
+    }
+    pending = tuple(group for group in batch if group.content_hash not in clean)
+    return clean, pending, tuple(issues)
+
+
+def _issue_summary(issues: tuple[str, ...], pending_count: int) -> str:
+    if not issues:
+        return f"{pending_count} item(s) missing from response"
+    return f"{pending_count} item(s) invalid or missing: {issues[0]}"
 
 
 def _template_from_parsed(claim: ParsedClaim) -> _ClaimTemplate:
@@ -385,9 +421,7 @@ def _fallback_template(item: NewsItem) -> _ClaimTemplate:
         subject=item.headline.strip() or "未命名事件",
         predicate="报道",
         object=_excerpt(item.body, DEFAULT_BODY_CHAR_LIMIT) or item.headline.strip(),
-        claim_type=(
-            "fact" if item.source_type in {"announcement", "policy"} else "opinion"
-        ),
+        claim_type=("fact" if item.source_type in {"announcement", "policy"} else "opinion"),
         event_type="政策 / 监管" if item.source_type == "policy" else "待判断",
         direction=infer_news_impact_direction(f"{item.headline} {item.body}"),
         time_horizon="unknown",
@@ -450,10 +484,7 @@ def _entries_by_event(
     grouped: dict[str, list[_NewsEntry]] = {}
     for entry in entries:
         grouped.setdefault(entry.event_id, []).append(entry)
-    return tuple(
-        (event_id, tuple(event_entries))
-        for event_id, event_entries in grouped.items()
-    )
+    return tuple((event_id, tuple(event_entries)) for event_id, event_entries in grouped.items())
 
 
 def _read_cached_templates(
@@ -600,8 +631,7 @@ def _canonical_url(value: str) -> str:
         sorted(
             (key, item_value)
             for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
-            if not key.casefold().startswith("utm_")
-            and key.casefold() not in _TRACKING_QUERY_KEYS
+            if not key.casefold().startswith("utm_") and key.casefold() not in _TRACKING_QUERY_KEYS
         )
     )
     return urlunsplit(

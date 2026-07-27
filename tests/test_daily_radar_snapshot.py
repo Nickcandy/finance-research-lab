@@ -84,10 +84,17 @@ def test_build_daily_radar_snapshot_exposes_stable_frontend_contract() -> None:
     steps = (
         AgentStep("fetch_event_source", "ths_global_news", "success", "2 item(s)"),
         AgentStep(
+            "route_event:1",
+            "route_event_analysis",
+            "success",
+            "fallback:confidence_cap",
+        ),
+        AgentStep(
             "verify_event_candidates:1",
             "verify_event_candidates",
             "success",
-            "ResearchReport; market fallback: primary source unavailable",
+            "ResearchReport",
+            warnings=("market fallback: primary source unavailable",),
         ),
     )
     window_start = datetime(2026, 7, 15, 12, tzinfo=SHANGHAI)
@@ -117,11 +124,10 @@ def test_build_daily_radar_snapshot_exposes_stable_frontend_contract() -> None:
         "critical_event_count": 0,
         "high_event_count": 0,
         "verify_first_count": 0,
-        "scoring_version": "1.0",
+        "scoring_version": "1.1",
     }
-    assert snapshot["run"]["warnings"] == [
-        "market fallback: primary source unavailable"
-    ]
+    assert snapshot["run"]["warnings"] == ["market fallback: primary source unavailable"]
+    assert "fallback:confidence_cap" not in snapshot["run"]["warnings"]
     event_payload = snapshot["events"][0]
     assert snapshot["all_events"][0]["id"] == event_payload["id"]
     assert snapshot["all_events"][0]["analysis_status"] == "succeeded"
@@ -231,9 +237,7 @@ def test_candidate_aggregation_does_not_let_false_positive_override_verified() -
         generated_at=window_end,
     )
 
-    assert [item["symbol"] for item in snapshot["candidate_groups"]["verified"]] == [
-        "300308.SZ"
-    ]
+    assert [item["symbol"] for item in snapshot["candidate_groups"]["verified"]] == ["300308.SZ"]
     assert snapshot["candidate_groups"]["excluded"] == []
     assert len(snapshot["candidate_groups"]["verified"][0]["event_ids"]) == 2
 
@@ -351,9 +355,7 @@ def test_snapshot_builds_watchlist_alerts_and_research_candidates() -> None:
         "generated_at": "2026-07-16T12:00:00+08:00",
     }
     assert snapshot["summary"]["research_candidate_count"] == 1
-    assert [item["symbol"] for item in snapshot["research_candidates"]] == [
-        "300308.SZ"
-    ]
+    assert [item["symbol"] for item in snapshot["research_candidates"]] == ["300308.SZ"]
     assert snapshot["research_candidates"][0]["impact_score"] == 45
 
 
@@ -381,9 +383,7 @@ def test_pure_stock_price_event_remains_in_catalog_but_is_not_applicable() -> No
     assert snapshot["summary"]["total_event_count"] == 1
     assert snapshot["summary"]["core_event_count"] == 0
     assert snapshot["all_events"][0]["analysis_status"] == "not_applicable"
-    assert snapshot["all_events"][0]["exclusion_reason"] == (
-        "pure_stock_price_update"
-    )
+    assert snapshot["all_events"][0]["exclusion_reason"] == ("pure_stock_price_update")
 
 
 def test_snapshot_write_is_atomic_and_read_validates_schema(tmp_path) -> None:
@@ -423,7 +423,13 @@ def test_snapshot_v22_exposes_routes_and_keeps_max_positive_and_negative() -> No
     positive = _assessment(events[0], positive=82, negative=0, confidence=80)
     negative = _assessment(events[1], positive=0, negative=71, confidence=42)
     routed = (
-        _Routed(events[0], AnalysisRouter().route(positive), (positive,)),
+        _Routed(
+            events[0],
+            AnalysisRouter().route(positive),
+            (positive,),
+            fallback="deterministic",
+            warnings=("部分新闻事实由规则降级提取，置信度上限为 35，请核验原始来源。",),
+        ),
         _Routed(events[1], AnalysisRouter().route(negative), (negative,)),
     )
     impacts = (
@@ -453,9 +459,15 @@ def test_snapshot_v22_exposes_routes_and_keeps_max_positive_and_negative() -> No
 
     assert snapshot["summary"]["critical_event_count"] == 1
     assert snapshot["summary"]["verify_first_count"] == 1
-    assert snapshot["summary"]["scoring_version"] == "1.0"
+    assert snapshot["summary"]["scoring_version"] == "1.1"
     assert snapshot["events"][0]["analysis_tier"] == "pro"
     assert snapshot["events"][0]["event_importance"] == positive.event_importance
+    assert snapshot["events"][0]["impact_score"] == 82
+    assert snapshot["events"][1]["impact_score"] == -71
+    assert snapshot["events"][0]["warnings"] == [
+        "部分新闻事实由规则降级提取，置信度上限为 35，请核验原始来源。"
+    ]
+    assert all("analysis fallback" not in warning for warning in snapshot["run"]["warnings"])
     candidate = snapshot["candidate_groups"]["verified"][0]
     assert candidate["positive_magnitude"] == 82
     assert candidate["negative_magnitude"] == 71
@@ -463,10 +475,13 @@ def test_snapshot_v22_exposes_routes_and_keeps_max_positive_and_negative() -> No
     assert candidate["conflict_score"] == 0
     assert candidate["priority_level"] == "critical"
     assert candidate["analysis_tier"] == "pro"
+    assert candidate["impact_direction"] == "mixed"
+    assert candidate["impact_score"] is None
     assert candidate["feature_breakdown"]["positive"]["directness"]["value"] == 82
-    assert "fixture:evidence" in candidate["feature_breakdown"]["positive"][
-        "directness"
-    ]["evidence_refs"]
+    assert (
+        "fixture:evidence"
+        in candidate["feature_breakdown"]["positive"]["directness"]["evidence_refs"]
+    )
 
 
 @pytest.mark.parametrize("invalid", [True, -1, 101, 1.5, "80"])
@@ -552,7 +567,7 @@ def _minimal_snapshot() -> dict[str, object]:
             "critical_event_count": 0,
             "high_event_count": 0,
             "verify_first_count": 0,
-            "scoring_version": "1.0",
+            "scoring_version": "1.1",
         },
         "events": [],
         "all_events": [],

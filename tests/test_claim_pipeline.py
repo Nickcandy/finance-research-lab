@@ -224,14 +224,69 @@ def test_missing_item_in_valid_response_uses_partial_fallback(tmp_path) -> None:
         response["claims"] = response["claims"][:1]  # type: ignore[index]
         return response
 
-    client = _Client([first_only])
+    client = _Client([first_only, lambda kwargs: _response_from_request(kwargs)])
     pipeline = ClaimPipeline(client, tmp_path / "claims")
 
     result = pipeline.extract(events)
 
     assert len(result.claims) == 2
+    assert len(client.calls) == 2
+    retry_payload = json.loads(client.calls[1]["messages"][-1]["content"])
+    assert len(retry_payload["items"]) == 1
+    assert result.batches[0].status == "success"
+    assert result.fallback_count == 0
+
+
+def test_invalid_row_retries_only_its_content_group(tmp_path) -> None:
+    events = tuple(_event(_news(f"事件 {index}")) for index in range(3))
+
+    def one_invalid(kwargs: dict[str, Any]) -> dict[str, object]:
+        response = _response_from_request(kwargs)
+        claims = response["claims"]
+        assert isinstance(claims, list)
+        claims[1]["object"] = ""
+        return response
+
+    client = _Client([one_invalid, lambda kwargs: _response_from_request(kwargs)])
+    cache_dir = tmp_path / "claims"
+    result = ClaimPipeline(client, cache_dir).extract(events)
+
+    assert [len(json.loads(call["messages"][-1]["content"])["items"]) for call in client.calls] == [
+        3,
+        1,
+    ]
+    assert result.batches[0].status == "success"
+    assert result.fallback_count == 0
+    assert all(
+        claim_cache_path(cache_dir, news_content_hash(event.items[0])).exists() for event in events
+    )
+
+
+def test_invalid_row_fallback_does_not_discard_clean_groups(tmp_path) -> None:
+    events = tuple(_event(_news(f"事件 {index}")) for index in range(3))
+
+    def invalidate_first(kwargs: dict[str, Any]) -> dict[str, object]:
+        response = _response_from_request(kwargs)
+        claims = response["claims"]
+        assert isinstance(claims, list)
+        claims[0]["object"] = ""
+        return response
+
+    client = _Client([invalidate_first, invalidate_first])
+    cache_dir = tmp_path / "claims"
+    result = ClaimPipeline(client, cache_dir).extract(events)
+
+    assert [len(json.loads(call["messages"][-1]["content"])["items"]) for call in client.calls] == [
+        3,
+        1,
+    ]
     assert result.batches[0].status == "partial"
     assert result.fallback_count == 1
+    assert not claim_cache_path(cache_dir, news_content_hash(events[0].items[0])).exists()
+    assert all(
+        claim_cache_path(cache_dir, news_content_hash(event.items[0])).exists()
+        for event in events[1:]
+    )
 
 
 def test_corrupted_cache_warns_and_is_rebuilt_atomically(tmp_path) -> None:

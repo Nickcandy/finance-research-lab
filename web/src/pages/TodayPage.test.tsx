@@ -35,8 +35,8 @@ describe("TodayPage", () => {
     expect(screen.getByRole("heading", { name: "Watchlist 风险预警" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "影响优先级" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "高影响待核验" })).toBeInTheDocument();
-    expect(screen.getByText("正向 84")).toBeInTheDocument();
-    expect(screen.getByText("负向 18")).toBeInTheDocument();
+    expect(screen.getAllByText("正向 84").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("负向 18").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Pro 深度分析/).length).toBeGreaterThan(0);
     expect(screen.getByText(/影响分是研究优先级，不是收益预测/)).toBeInTheDocument();
     expect(screen.getByText("平安银行")).toBeInTheDocument();
@@ -56,14 +56,15 @@ describe("TodayPage", () => {
       .find((element) => element !== null);
     expect(firstEvent).not.toBeNull();
     expect(within(firstEvent!).getByText("总体方向：利好")).toBeInTheDocument();
-    expect(within(firstEvent!).getByText("指数：+28")).toBeInTheDocument();
+    expect(within(firstEvent!).getByText("事件重要度：86")).toBeInTheDocument();
     expect(within(firstEvent!).getByText("证据置信度：82")).toBeInTheDocument();
 
     const verifiedGroup = screen.getByRole("heading", { name: "已校验候选" }).closest("section");
     expect(verifiedGroup).not.toBeNull();
     expect(within(verifiedGroup!).getByText("直接影响 / 高强度")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("方向：利好")).toBeInTheDocument();
-    expect(within(verifiedGroup!).getByText("指数：+80")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("正向 84")).toBeInTheDocument();
+    expect(within(verifiedGroup!).getByText("负向 18")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("置信度：88")).toBeInTheDocument();
     await user.click(within(verifiedGroup!).getByText("宁德时代"));
     expect(within(verifiedGroup!).getByText(/贸易政策变化/)).toBeInTheDocument();
@@ -125,6 +126,41 @@ describe("TodayPage", () => {
     renderPage();
 
     expect(await screen.findByText("数据已超过 24 小时")).toBeInTheDocument();
+  });
+
+  it("links to the full catalog when no attention event qualifies", async () => {
+    const quietFixture = {
+      ...fixture,
+      events: fixture.events.map((event) => ({
+        ...event,
+        analysis_tier: "deterministic" as const,
+        importance_level: "low" as const,
+      })),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse(quietFixture)));
+    renderPage();
+
+    expect(await screen.findByText(/当前没有 Pro、Flash 或高重要度事件/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看完整事件目录" })).toHaveAttribute("href", "/events");
+  });
+
+  it("renders an explicit unknown value-chain state", async () => {
+    const unknownChainFixture = {
+      ...fixture,
+      events: fixture.events.map((event, index) => index === 0 ? {
+        ...event,
+        value_chain: {
+          ...event.value_chain,
+          chain_steps: [],
+          reasoning: "没有可审计的图谱关系",
+        },
+      } : event),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(apiResponse(unknownChainFixture)));
+    renderPage();
+
+    expect(await screen.findByText("未识别到可验证价值链")).toBeInTheDocument();
+    expect(screen.getByText("没有可审计的图谱关系")).toBeInTheDocument();
   });
 });
 

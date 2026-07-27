@@ -5,7 +5,7 @@ from typing import Iterable, Literal
 
 from .models import ImpactDirection
 
-SCORING_VERSION = "1.0"
+SCORING_VERSION = "1.1"
 
 PriorityLevel = Literal["critical", "high", "medium", "low", "verify_first"]
 AnalysisTier = Literal["pro", "flash", "deterministic", "not_applicable"]

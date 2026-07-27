@@ -561,7 +561,7 @@ def test_daily_radar_workflow_writes_optional_frontend_snapshot(tmp_path, monkey
     assert payload["schema_version"] == "2.2"
     assert payload["events"][0]["analysis_tier"] == "pro"
     assert payload["events"][0]["event_importance"] >= 0
-    assert payload["summary"]["scoring_version"] == "1.0"
+    assert payload["summary"]["scoring_version"] == "1.1"
     assert payload["events"][0]["title"] == "事件"
     assert payload["all_events"][0]["title"] == "事件"
     assert (tmp_path / "event-catalogs" / f"{payload['run']['id']}.json").is_file()
@@ -569,14 +569,14 @@ def test_daily_radar_workflow_writes_optional_frontend_snapshot(tmp_path, monkey
         tmp_path
         / "point-in-time"
         / payload["run"]["id"]
-        / "scoring-1.0.json"
+        / "scoring-1.1.json"
     ).is_file()
     pit_payload = json.loads(
         (
             tmp_path
             / "point-in-time"
             / payload["run"]["id"]
-            / "scoring-1.0.json"
+            / "scoring-1.1.json"
         ).read_text(encoding="utf-8")
     )
     assert pit_payload["snapshot"]["run"]["id"] == payload["run"]["id"]

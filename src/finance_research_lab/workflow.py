@@ -9,6 +9,7 @@ from .analysis_router import AnalysisRoute, AnalysisRouter
 from .akshare_evidence import AkShareEvidenceProvider
 from .baostock_market import BaoStockMarketProvider
 from .claim_pipeline import ClaimPipeline
+from .claims import Claim
 from .daily_radar_report import render_daily_event_radar
 from .daily_radar_snapshot import (
     build_daily_radar_snapshot,
@@ -19,6 +20,7 @@ from .event_clustering import cluster_market_events, rank_hot_events
 from .event_eligibility import is_market_event_researchable
 from .event_catalog import event_catalog_path, write_event_catalog
 from .event_analysis import event_analysis_path, write_successful_event_analysis
+from .event_brief import EventBrief, build_event_brief
 from .event_sources import SHANGHAI, ThsNewsSource
 from .evidence_ledger import EvidenceLedger, build_evidence_ledgers
 from .evidence_tool_agent import run_evidence_tool_calls
@@ -43,6 +45,7 @@ from .models import (
     AShareCompany,
     Evidence,
     EvidencePlan,
+    EventAnalysis,
     FinancialSnapshot,
     MarketSnapshot,
     MarketEvent,
@@ -51,9 +54,10 @@ from .models import (
     ResearchReport,
     ResearchTask,
     StockImpact,
+    ValueChainTrace,
     WatchlistItem,
 )
-from .news_trace import build_research_report, verify_research_report_candidates
+from .news_trace import verify_research_report_candidates
 from .point_in_time import (
     build_point_in_time_payload,
     point_in_time_path,
@@ -89,6 +93,7 @@ class RoutedEventAnalysis:
     route: AnalysisRoute
     assessments: tuple[ImpactAssessment, ...]
     ledgers: tuple[EvidenceLedger, ...]
+    brief: EventBrief
     report: ResearchReport | None
     fallback: str = ""
     warnings: tuple[str, ...] = ()
@@ -117,6 +122,7 @@ def _step(step_name: str, result: ToolResult) -> AgentStep:
         tool_name=result.tool_name,
         status=result.status,
         summary=summary,
+        warnings=(result.error,) if result.status == "success" and result.error else (),
     )
 
 
@@ -341,7 +347,11 @@ def run_daily_radar_workflow(
             "score_all_market_events",
             "success",
             assessments,
-            "；".join(claim_result.warnings),
+            "；".join(
+                warning
+                for warning in claim_result.warnings
+                if warning.startswith("claim cache ")
+            ),
         )
     steps.append(_step("score_all_market_events", claim_step_result))
     if claim_step_result.status == "error":
@@ -349,6 +359,7 @@ def run_daily_radar_workflow(
 
     ledgers_by_event = _group_ledgers_by_event(ledgers)
     assessments_by_event = _group_assessments_by_event(assessments)
+    claims_by_event = _group_claims_by_event(claim_result.claims)
     router = AnalysisRouter()
     company_provider = AkShareEvidenceProvider(evidence_cache_path, refresh=refresh_evidence)
     market_provider = FallbackMarketProvider(
@@ -370,13 +381,21 @@ def run_daily_radar_workflow(
                 ToolResult(
                     "route_event_analysis",
                     "success",
-                    route.analysis_tier,
-                    "；".join(route.reason_codes),
+                    "；".join((route.analysis_tier, *route.reason_codes)),
                 ),
             )
         )
         fallback = ""
         warnings: tuple[str, ...] = ()
+        event_ledgers = ledgers_by_event.get(event_id, ())
+        event_claims = claims_by_event.get(event_id, ())
+        brief = build_event_brief(
+            event,
+            event_claims,
+            event_ledgers,
+            event_assessments,
+            universe_result.output,
+        )
         if route.analysis_tier == "pro":
             report, daily_tool_results, event_steps, event_warnings = (
                 _analyze_market_event(
@@ -401,7 +420,7 @@ def run_daily_radar_workflow(
                     universe_result.output,
                     event_assessments,
                 )
-                warnings = (*warnings, "pro analysis failed; deterministic fallback used")
+                warnings = (*warnings, "深度分析失败，已使用确定性简报。")
         else:
             report = _build_rule_report(
                 event,
@@ -409,13 +428,20 @@ def run_daily_radar_workflow(
                 universe_result.output,
                 event_assessments,
             )
+        report = _apply_event_brief(report, brief)
+        if any(claim.extraction_method == "fallback" for claim in event_claims):
+            warnings = (
+                *warnings,
+                "部分新闻事实由规则降级提取，置信度上限为 35，请核验原始来源。",
+            )
         reports.append(report)
         routed_analyses.append(
             RoutedEventAnalysis(
                 event=event,
                 route=route,
                 assessments=event_assessments,
-                ledgers=ledgers_by_event.get(event_id, ()),
+                ledgers=event_ledgers,
+                brief=brief,
                 report=report,
                 fallback=fallback,
                 warnings=warnings,
@@ -572,6 +598,15 @@ def _group_assessments_by_event(
     return {event_id: tuple(values) for event_id, values in grouped.items()}
 
 
+def _group_claims_by_event(
+    claims: tuple[Claim, ...],
+) -> dict[str, tuple[Claim, ...]]:
+    grouped: dict[str, list[Claim]] = {}
+    for claim in claims:
+        grouped.setdefault(claim.event_id, []).append(claim)
+    return {event_id: tuple(values) for event_id, values in grouped.items()}
+
+
 def _event_route(
     router: AnalysisRouter,
     event_id: str,
@@ -603,7 +638,6 @@ def _build_rule_report(
     universe: list[AShareCompany],
     assessments: tuple[ImpactAssessment, ...],
 ) -> ResearchReport:
-    base = build_research_report(_market_event_news(event), watchlist, universe)
     companies = {company.symbol: company for company in universe}
     impacts = []
     for assessment in assessments:
@@ -664,13 +698,36 @@ def _build_rule_report(
                 confidence=confidence,
             )
         )
-    return replace(
-        base,
-        event=replace(
-            base.event,
+    return ResearchReport(
+        raw_news=_market_event_news(event),
+        event=EventAnalysis(
+            event_type="待判断",
+            confidence="low",
             reasoning="基于 Claim、EvidenceLedger 和固定评分规则生成的简报。",
         ),
+        value_chain=ValueChainTrace("", ""),
         stock_impacts=tuple(impacts),
+        validation_tasks=(),
+        stage="待判断",
+        action_state="待判断",
+    )
+
+
+def _apply_event_brief(
+    report: ResearchReport,
+    brief: EventBrief,
+) -> ResearchReport:
+    return replace(
+        report,
+        event=replace(
+            report.event,
+            event_type=brief.event_type,
+            themes=brief.themes,
+            key_facts=brief.key_facts,
+            reasoning=brief.reasoning,
+        ),
+        value_chain=brief.value_chain,
+        validation_tasks=brief.validation_tasks,
     )
 
 

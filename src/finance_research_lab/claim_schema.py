@@ -46,6 +46,19 @@ class ParsedClaim:
     occurred_at: str
 
 
+@dataclass(frozen=True)
+class ClaimRowIssue:
+    index: int
+    source_item_ids: tuple[str, ...]
+    error: str
+
+
+@dataclass(frozen=True)
+class PartialClaimResponse:
+    claims: tuple[ParsedClaim, ...]
+    issues: tuple[ClaimRowIssue, ...]
+
+
 def claim_response_json_schema() -> dict[str, Any]:
     string_array = {"type": "array", "items": {"type": "string"}}
     quantitative_fact = _object_schema(
@@ -91,10 +104,51 @@ def parse_claim_response(
     root = _exact_object(payload, "root", {"claims"})
     rows = _array(root["claims"], "claims")
     claims = tuple(
-        _parse_claim(row, f"claims.{index}", expected_items)
-        for index, row in enumerate(rows)
+        _parse_claim(row, f"claims.{index}", expected_items) for index, row in enumerate(rows)
     )
     return claims
+
+
+def parse_claim_response_partial(
+    content: str,
+    expected_items: dict[str, str],
+) -> PartialClaimResponse:
+    """Strictly parse the envelope while isolating invalid claim rows."""
+
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid claim JSON: {exc}") from exc
+    root = _exact_object(payload, "root", {"claims"})
+    rows = _array(root["claims"], "claims")
+    claims: list[ParsedClaim] = []
+    issues: list[ClaimRowIssue] = []
+    for index, row in enumerate(rows):
+        try:
+            claims.append(_parse_claim(row, f"claims.{index}", expected_items))
+        except ValueError as exc:
+            issues.append(
+                ClaimRowIssue(
+                    index=index,
+                    source_item_ids=_known_source_item_ids(row, expected_items),
+                    error=str(exc),
+                )
+            )
+    return PartialClaimResponse(tuple(claims), tuple(issues))
+
+
+def _known_source_item_ids(
+    value: object,
+    expected_items: dict[str, str],
+) -> tuple[str, ...]:
+    if not isinstance(value, dict):
+        return ()
+    rows = value.get("source_item_ids")
+    if not isinstance(rows, list):
+        return ()
+    return tuple(
+        dict.fromkeys(row for row in rows if isinstance(row, str) and row in expected_items)
+    )
 
 
 def _parse_claim(
@@ -118,7 +172,9 @@ def _parse_claim(
         "occurred_at",
     }
     data = _exact_object(value, path, required)
-    source_item_ids = tuple(_non_empty_string_array(data["source_item_ids"], f"{path}.source_item_ids"))
+    source_item_ids = tuple(
+        _non_empty_string_array(data["source_item_ids"], f"{path}.source_item_ids")
+    )
     event_id = _non_empty_string(data["event_id"], f"{path}.event_id")
     for source_item_id in source_item_ids:
         expected_event_id = expected_items.get(source_item_id)
@@ -128,7 +184,9 @@ def _parse_claim(
             raise ValueError(f"event mismatch at {path}.event_id")
     quantitative_facts = tuple(
         _parse_quantitative_fact(item, f"{path}.quantitative_facts.{index}", source_item_ids)
-        for index, item in enumerate(_array(data["quantitative_facts"], f"{path}.quantitative_facts"))
+        for index, item in enumerate(
+            _array(data["quantitative_facts"], f"{path}.quantitative_facts")
+        )
     )
     return ParsedClaim(
         event_id=event_id,

@@ -21,10 +21,10 @@ PENDING_SECTION = "暂无（Task 5/6 尚未接入）"
 class RoutedAnalysis(Protocol):
     event: MarketEvent
     assessments: tuple[ImpactAssessment, ...]
+    brief: Any
 
     @property
-    def route(self) -> Any:
-        ...
+    def route(self) -> Any: ...
 
 
 def render_daily_event_radar(
@@ -47,10 +47,26 @@ def render_daily_event_radar(
     if reports is not None and len(reports) != len(events):
         raise ValueError("reports must align with events")
 
-    verified = _format_candidates(reports, "verified") if reports is not None else PENDING_SECTION
-    unverified = _format_candidates(reports, "unverified") if reports is not None else PENDING_SECTION
-    excluded = _format_candidates(reports, "excluded") if reports is not None else PENDING_SECTION
-    watchlist_hits = _format_candidates(reports, "watchlist") if reports is not None else PENDING_SECTION
+    verified = (
+        _format_candidates(reports, "verified", routed_analyses)
+        if reports is not None
+        else PENDING_SECTION
+    )
+    unverified = (
+        _format_candidates(reports, "unverified", routed_analyses)
+        if reports is not None
+        else PENDING_SECTION
+    )
+    excluded = (
+        _format_candidates(reports, "excluded", routed_analyses)
+        if reports is not None
+        else PENDING_SECTION
+    )
+    watchlist_hits = (
+        _format_candidates(reports, "watchlist", routed_analyses)
+        if reports is not None
+        else PENDING_SECTION
+    )
     validation_tasks = _format_validation_tasks(reports) if reports is not None else PENDING_SECTION
     review = "暂无" if reports is not None else PENDING_SECTION
     major_events, ranked_stocks, verify_first, watchlist_risks = _scored_sections(
@@ -66,7 +82,7 @@ def render_daily_event_radar(
 
 ## 1. 今日核心事件
 
-{_event_sections(events, reports)}
+{_event_sections(events, reports, routed_analyses)}
 
 ## 2. 已校验 A股候选
 
@@ -122,10 +138,7 @@ def _scored_sections(
         routed_analyses,
         key=lambda routed: (
             -max(
-                (
-                    assessment.event_importance
-                    for assessment in routed.assessments
-                ),
+                (assessment.event_importance for assessment in routed.assessments),
                 default=0,
             ),
             routed.event.title,
@@ -148,10 +161,7 @@ def _scored_sections(
     stock_rows = sorted(
         by_symbol.items(),
         key=lambda item: (
-            -max(
-                max(value.positive_magnitude, value.negative_magnitude)
-                for value in item[1]
-            ),
+            -max(max(value.positive_magnitude, value.negative_magnitude) for value in item[1]),
             item[0],
         ),
     )
@@ -175,8 +185,7 @@ def _scored_sections(
             f"{max(item.negative_magnitude for item in assessments)}"
         )
         for symbol, assessments in stock_rows
-        if symbol in watchlist
-        and max(item.negative_magnitude for item in assessments) >= 60
+        if symbol in watchlist and max(item.negative_magnitude for item in assessments) >= 60
     ]
     return (
         "\n".join(major_lines) or "暂无",
@@ -204,7 +213,9 @@ def _report_company_context(
 def _event_sections(
     events: tuple[MarketEvent, ...],
     reports: tuple[ResearchReport | None, ...] | None,
+    routed_analyses: Sequence[RoutedAnalysis],
 ) -> str:
+    routed_by_title = {routed.event.title: routed for routed in routed_analyses}
     sections: list[str] = []
     for index, event in enumerate(events, start=1):
         sources = tuple(
@@ -213,12 +224,16 @@ def _event_sections(
         urls = event.source_urls
         url_lines = "\n".join(f"  - {url}" for url in urls) if urls else "  - 暂无可用 URL"
         report = reports[index - 1] if reports is not None else None
-        research = _event_research(report, reports is not None)
+        research = _event_research(
+            report,
+            reports is not None,
+            routed_by_title.get(event.title),
+        )
         sections.append(
             f"""### 1.{index} {event.title}
-- 最新时间：{event.items[0].published_at or '未提供'}
+- 最新时间：{event.items[0].published_at or "未提供"}
 - 报道数量：{len(event.items)}
-- 独立来源：{len(sources)}（{' / '.join(sources)}）
+- 独立来源：{len(sources)}（{" / ".join(sources)}）
 - 事件类型：{research[0]}
 - 主题：{research[1]}
 - 产业链：{research[2]}
@@ -232,23 +247,39 @@ def _event_sections(
 def _event_research(
     report: ResearchReport | None,
     research_attempted: bool,
+    routed: RoutedAnalysis | None = None,
 ) -> tuple[str, str, str, str]:
     if report is None:
         value = "分析失败，详见 AgentStep" if research_attempted else "待研究"
         return value, value, value, value
-    themes = " / ".join(report.event.themes) or "待判断"
-    chain = " -> ".join(report.value_chain.chain_steps) or "待判断"
+    brief = getattr(routed, "brief", None) if routed is not None else None
+    event_type = brief.event_type if brief is not None else report.event.event_type
+    themes = " / ".join(brief.themes if brief is not None else report.event.themes) or "待判断"
+    value_chain = brief.value_chain if brief is not None else report.value_chain
+    chain = " -> ".join(value_chain.chain_steps) or "未识别到可验证价值链"
+    if routed is not None and routed.assessments:
+        directions = {assessment.direction for assessment in routed.assessments}
+        direction = next(iter(directions)) if len(directions) == 1 else "mixed"
+        positive = max(item.positive_magnitude for item in routed.assessments)
+        negative = max(item.negative_magnitude for item in routed.assessments)
+        confidence = max(item.confidence for item in routed.assessments)
+        summary = (
+            f"{impact_direction_label(direction)} / 正向 {positive} / "
+            f"负向 {negative} / 置信度 {confidence}"
+        )
+        return event_type, themes, chain, summary
     impact = summarize_event_impact(report)
     summary = (
         f"{impact_direction_label(impact.direction)} / "
         f"{format_impact_score(impact.score)} / 置信度 {impact.confidence}"
     )
-    return report.event.event_type, themes, chain, summary
+    return event_type, themes, chain, summary
 
 
 def _format_candidates(
     reports: tuple[ResearchReport | None, ...],
     category: str,
+    routed_analyses: Sequence[RoutedAnalysis] = (),
 ) -> str:
     grouped: dict[str, list[tuple[ResearchReport, StockImpact]]] = {}
     for report in reports:
@@ -278,21 +309,40 @@ def _format_candidates(
                 grouped.setdefault(impact.symbol, []).append((report, impact))
     if not grouped:
         return "暂无"
-    return "\n".join(_candidate_line(items, category) for items in grouped.values())
+    assessments_by_symbol: dict[str, list[ImpactAssessment]] = {}
+    for routed in routed_analyses:
+        for assessment in routed.assessments:
+            assessments_by_symbol.setdefault(assessment.symbol, []).append(assessment)
+    return "\n".join(
+        _candidate_line(
+            items,
+            category,
+            assessments_by_symbol.get(items[0][1].symbol, ()),
+        )
+        for items in grouped.values()
+    )
 
 
 def _candidate_line(
     items: list[tuple[ResearchReport, StockImpact]],
     category: str,
+    assessments: Sequence[ImpactAssessment] = (),
 ) -> str:
     first = items[0][1]
     event_titles = _unique(report.raw_news.headline for report, _ in items)
-    impact_types = _unique(
-        f"{impact_direction_label(impact.impact_direction)} "
-        f"{format_impact_score(stock_impact_score(impact))}（{impact.confidence}） / "
-        f"{impact.impact_type} / {impact.impact_strength}"
-        for _, impact in items
-    )
+    if assessments:
+        impact_types = [
+            f"正向 {max(item.positive_magnitude for item in assessments)} / "
+            f"负向 {max(item.negative_magnitude for item in assessments)} / "
+            f"置信度 {max(item.confidence for item in assessments)}"
+        ]
+    else:
+        impact_types = _unique(
+            f"{impact_direction_label(impact.impact_direction)} "
+            f"{format_impact_score(stock_impact_score(impact))}（{impact.confidence}） / "
+            f"{impact.impact_type} / {impact.impact_strength}"
+            for _, impact in items
+        )
     reasons = _unique(impact.reasoning for _, impact in items if impact.reasoning)
     evidence = _unique(value for _, impact in items for value in impact.evidence if value)
     risks = _unique(value for _, impact in items for value in impact.risks if value)

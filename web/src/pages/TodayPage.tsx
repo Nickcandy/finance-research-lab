@@ -27,6 +27,9 @@ export function TodayPage() {
 
   const radar = query.data;
   if (radar === null || radar.events.length === 0) return <EmptyState />;
+  const attentionEvents = radar.events.filter(
+    (event) => event.analysis_tier === "pro" || event.analysis_tier === "flash" || event.importance_level === "high",
+  );
 
   return (
     <div className="mx-auto min-w-0 max-w-[1380px] overflow-x-hidden px-4 py-7 sm:px-7 lg:px-9 lg:py-10">
@@ -37,7 +40,12 @@ export function TodayPage() {
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <div className="min-w-0">
             <p className="font-semibold">数据说明</p>
-            <p className="mt-0.5 break-all">{radar.run.warnings.join("；")}</p>
+            <details>
+              <summary className="cursor-pointer list-none break-all">
+                {radar.run.warnings[0]}{radar.run.warnings.length > 1 && `（另 ${radar.run.warnings.length - 1} 条）`}
+              </summary>
+              {radar.run.warnings.length > 1 && <ul className="mt-1 space-y-1">{radar.run.warnings.slice(1).map((warning) => <li key={warning}>· {warning}</li>)}</ul>}
+            </details>
           </div>
         </div>
       )}
@@ -59,7 +67,12 @@ export function TodayPage() {
             <a href="/events" className="text-xs font-semibold text-brand hover:underline">查看全部 {radar.summary.total_event_count} 个事件</a>
           </div>
           <div className="space-y-4">
-            {radar.events.map((event) => <EventCard key={event.id} event={event} />)}
+            {attentionEvents.map((event) => <EventCard key={event.id} event={event} />)}
+            {attentionEvents.length === 0 && (
+              <div className="rounded-xl border border-line bg-surface p-8 text-center text-sm text-ink-muted">
+                当前没有 Pro、Flash 或高重要度事件。<a href="/events" className="ml-1 font-semibold text-brand hover:underline">查看完整事件目录</a>
+              </div>
+            )}
           </div>
         </section>
 

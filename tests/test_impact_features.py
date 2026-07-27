@@ -289,7 +289,7 @@ def test_full_assessment_uses_verified_company_and_order_ratio() -> None:
     assert assessment.positive_features.economic_scale.value == 95
     assert assessment.positive_magnitude == 70
     assert assessment.priority_level == "critical"
-    assert assessment.scoring_version == "1.0"
+    assert assessment.scoring_version == "1.1"
 
 
 def test_commodity_event_can_be_positive_upstream_and_negative_downstream() -> None:

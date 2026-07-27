@@ -24,6 +24,7 @@ const impactStrengthLabels: Record<ImpactStrength, string> = {
 };
 
 export function CandidateRow({ candidate, compact = false }: CandidateRowProps) {
+  const scored = "positive_magnitude" in candidate;
   return (
     <details className="group border-b border-line last:border-b-0">
       <summary className="flex cursor-pointer list-none items-start gap-3 py-3.5">
@@ -42,7 +43,12 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <ImpactBadge kind="direction" value={candidate.impact_direction} />
-            <ImpactBadge kind="score" value={candidate.impact_score} />
+            {scored ? (
+              <>
+                <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-semibold text-brand">正向 {candidate.positive_magnitude}</span>
+                <span className="rounded-full bg-risk-soft px-2.5 py-1 text-[11px] font-semibold text-risk">负向 {candidate.negative_magnitude}</span>
+              </>
+            ) : <ImpactBadge kind="score" value={candidate.impact_score} />}
             {typeof candidate.confidence === "number"
               ? <span className="rounded-full border border-info/20 bg-info-soft px-2.5 py-1 text-[11px] font-semibold text-info">置信度：{candidate.confidence}</span>
               : <ImpactBadge kind="confidence" value={candidate.confidence} />}
