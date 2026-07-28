@@ -30,6 +30,26 @@ def test_price_move_with_causal_fact_remains_researchable() -> None:
     assert news_item_exclusion_reason(item) == ""
 
 
+def test_hong_kong_stock_price_update_without_cause_is_filtered() -> None:
+    item = NewsItem(
+        "建滔积层板港股跌超15%",
+        "同花顺",
+        body="建滔积层板港股跌超15%，现报8.2港元。",
+    )
+
+    assert news_item_exclusion_reason(item) == PURE_STOCK_PRICE_UPDATE
+
+
+def test_price_move_with_new_business_fact_remains_researchable() -> None:
+    item = NewsItem(
+        "公司发布新品后股价大涨",
+        "公司公告",
+        body="公司发布新一代光模块，并已通过核心客户认证。",
+    )
+
+    assert news_item_exclusion_reason(item) == ""
+
+
 def test_sector_index_and_commodity_moves_are_not_filtered_in_this_task() -> None:
     headlines = (
         "证券板块走低，华安证券跌停",
@@ -39,6 +59,8 @@ def test_sector_index_and_commodity_moves_are_not_filtered_in_this_task() -> Non
         "韩国综指跌幅扩大至7%",
         "港股汽车股持续走高，小鹏集团-W涨超7%",
         "现货白银跌超1%",
+        "美、布两油走低",
+        "国际油价27日大幅下跌",
         "6月PPI意外下跌后，美国国债价格小幅走高",
     )
 

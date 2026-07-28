@@ -109,13 +109,32 @@ def build_auditable_value_chain(
         )
     )
     event_nodes = _unique_nodes(infer_value_chain_nodes(event_text))
+    companies = {company.symbol: company for company in universe}
+    verified_companies = tuple(
+        companies[ledger.symbol]
+        for ledger in ledgers
+        if ledger.verified and ledger.symbol in companies
+    )
     event_graphs = {node.chain_id for node in event_nodes}
     if len(event_graphs) > 1:
         return _unknown_chain("事件文本同时命中多张产业链图，无法可靠消歧。")
     if not event_nodes:
-        return _unknown_chain("未识别到可验证价值链。")
+        industries = tuple(
+            dict.fromkeys(company.industry for company in verified_companies if company.industry)
+        )
+        if industries:
+            return ValueChainTrace(
+                payer="",
+                receiver="",
+                chain_steps=industries,
+                impact_direction="unknown",
+                reasoning="已确认相关公司的行业位置；真实上下游和供给瓶颈仍需公告、订单或客户认证核验。",
+                demand_driver=_demand_driver(claims),
+                supporting_evidence=_claim_refs(claims),
+                downgrade_conditions=("无法找到订单、收入构成或客户认证支持产业链关系",),
+            )
+        return _unknown_chain("未识别到可验证价值链。", claims)
 
-    companies = {company.symbol: company for company in universe}
     assessments_by_symbol = {assessment.symbol: assessment for assessment in assessments}
     candidates: list[
         tuple[tuple[int, int, int, str, str, str], tuple[str, ...], ImpactDirection, str]
@@ -167,6 +186,11 @@ def build_auditable_value_chain(
             chain_steps=path,
             impact_direction=direction,
             reasoning=reasoning,
+            demand_driver=_demand_driver(claims),
+            bottleneck="待核验",
+            supporting_evidence=references,
+            counter_evidence=("供应商集中度、扩产难度和替代周期尚未形成强证据",),
+            downgrade_conditions=("替代供应商认证或扩产速度快于预期", "公司收入暴露无法验证",),
         )
 
     unique_labels = tuple(dict.fromkeys(node.label for node in event_nodes))
@@ -177,6 +201,9 @@ def build_auditable_value_chain(
             chain_steps=unique_labels,
             impact_direction="unknown",
             reasoning="仅识别到事件产业节点，尚无已验证公司传导关系。",
+            demand_driver=_demand_driver(claims),
+            supporting_evidence=_claim_refs(claims),
+            downgrade_conditions=("无法验证该节点与上市公司的收入或订单关系",),
         )
     return _unknown_chain("识别到多个产业节点，但没有已验证公司关系可用于消歧。")
 
@@ -185,11 +212,29 @@ def _unique_nodes(nodes: tuple[ValueChainNode, ...]) -> tuple[ValueChainNode, ..
     return tuple({(node.chain_id, node.node_id): node for node in nodes}.values())
 
 
-def _unknown_chain(reasoning: str) -> ValueChainTrace:
+def _unknown_chain(reasoning: str, claims: tuple[Claim, ...] = ()) -> ValueChainTrace:
     return ValueChainTrace(
         payer="",
         receiver="",
         chain_steps=(),
         impact_direction="unknown",
         reasoning=reasoning,
+        demand_driver=_demand_driver(claims),
+        supporting_evidence=_claim_refs(claims),
+        downgrade_conditions=("缺少可验证的产业节点、订单、客户或产能证据",),
     )
+
+
+def _demand_driver(claims: tuple[Claim, ...]) -> str:
+    return next(
+        (
+            " ".join((claim.subject, claim.predicate, claim.object)).strip()
+            for claim in claims
+            if getattr(claim, "direction", "unknown") != "unknown"
+        ),
+        "",
+    )
+
+
+def _claim_refs(claims: tuple[Claim, ...]) -> tuple[str, ...]:
+    return tuple(f"claim:{claim.id}" for claim in claims)

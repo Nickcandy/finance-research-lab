@@ -16,7 +16,7 @@ const tierLabels = {
 
 export function ImpactRankings({ events, groups }: ImpactRankingsProps) {
   const candidates = uniqueCandidates([...groups.verified, ...groups.unverified])
-    .filter((candidate) => Number.isFinite(candidate.positive_magnitude))
+    .filter((candidate) => candidate.score_status !== "insufficient_evidence" && Number.isFinite(candidate.positive_magnitude))
     .sort((left, right) => maxImpact(right) - maxImpact(left));
   const verifyFirst = candidates.filter((candidate) => candidate.priority_level === "verify_first");
   const watchlistRisks = candidates.filter(

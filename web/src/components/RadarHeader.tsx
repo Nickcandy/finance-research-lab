@@ -1,14 +1,27 @@
 import { AlertTriangle, CalendarDays, Database, RefreshCcw } from "lucide-react";
 import type { RadarRun } from "../types/radar";
 import { formatFullDate, formatWindow, freshnessLabel, isStale } from "../utils/format";
+import { GenerateRadarButton } from "./GenerateRadarButton";
 
 interface RadarHeaderProps {
   run: RadarRun;
   onRefresh: () => void;
   refreshing: boolean;
+  onGenerate: () => void;
+  generating: boolean;
+  generationElapsed: number;
+  generationError?: string;
 }
 
-export function RadarHeader({ run, onRefresh, refreshing }: RadarHeaderProps) {
+export function RadarHeader({
+  run,
+  onRefresh,
+  refreshing,
+  onGenerate,
+  generating,
+  generationElapsed,
+  generationError,
+}: RadarHeaderProps) {
   const stale = isStale(run.generated_at);
   return (
     <header className="space-y-5">
@@ -24,15 +37,25 @@ export function RadarHeader({ run, onRefresh, refreshing }: RadarHeaderProps) {
             <span className="block sm:inline">过去 24 小时的市场事件与研究线索</span>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-lg border border-line bg-surface px-4 text-sm font-semibold text-ink transition hover:border-brand/40 hover:text-brand disabled:cursor-wait disabled:opacity-60 sm:self-auto"
-        >
-          <RefreshCcw className={`size-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
-          刷新快照
-        </button>
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing || generating}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-semibold text-ink transition hover:border-brand/40 hover:text-brand disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCcw className={`size-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
+              刷新快照
+            </button>
+            <GenerateRadarButton
+              onGenerate={onGenerate}
+              generating={generating}
+              elapsedSeconds={generationElapsed}
+              error={generationError}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">

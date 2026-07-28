@@ -22,7 +22,7 @@ from .impact_scoring import (
 )
 from .impact_assessment import FeatureScore, ImpactAssessment, SCORING_VERSION
 from .impact_horizon import DirectionalHorizons, ImpactHorizon
-from .models import MarketEvent, ResearchReport, StockImpact
+from .models import MarketEvent, NewsItem, ResearchReport, StockImpact
 
 SCHEMA_VERSION = "2.3"
 DISCLAIMER = "研究辅助，不构成投资建议。"
@@ -58,6 +58,7 @@ class _ImpactContext:
     source_count: int
     latest_published_at: str
     impact: StockImpact
+    news_items: tuple[NewsItem, ...]
 
 
 def build_daily_radar_snapshot(
@@ -100,6 +101,7 @@ def build_daily_radar_snapshot(
         )
         for index, (event, report) in enumerate(zip(events, reports))
     ]
+    event_payload_by_id = {payload["id"]: payload for payload in event_payloads}
     candidate_groups = _candidate_groups(events, reports, event_ids)
     _attach_assessment_fields(candidate_groups, routed_analyses)
     if routed_analyses:
@@ -148,6 +150,9 @@ def build_daily_radar_snapshot(
                 "not_applicable"
                 if market_event_exclusion_reason(event)
                 else analyzed_status.get(market_event_id(event), "not_started")
+            ),
+            related_stocks=_related_stock_bindings(
+                event_payload_by_id.get(market_event_id(event), {}).get("candidates", [])
             ),
         )
         for index, event in enumerate(all_events)
@@ -497,6 +502,8 @@ def _event_summary_payload(
     event_id: str,
     rank: int,
     analysis_status: str,
+    *,
+    related_stocks: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     exclusion_reason = market_event_exclusion_reason(event)
     sources: list[dict[str, str]] = []
@@ -528,7 +535,35 @@ def _event_summary_payload(
         ],
         "analysis_status": analysis_status,
         "exclusion_reason": exclusion_reason,
+        "related_stocks": list(related_stocks),
     }
+
+
+def _related_stock_bindings(candidates: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    bindings = []
+    for candidate in candidates:
+        reason_codes = candidate.get("reason_codes", [])
+        if "directness:explicit_company" in reason_codes:
+            relation_type = "explicit_company"
+        elif candidate.get("verification_status") == "verified":
+            relation_type = "value_chain"
+        else:
+            relation_type = "unverified"
+        bindings.append(
+            {
+                "symbol": candidate["symbol"],
+                "name": candidate["name"],
+                "relation_type": relation_type,
+                "verification_status": candidate["verification_status"],
+                "watchlist_hit": candidate.get("watchlist_hit", False),
+                "reasoning": candidate.get("reasoning", ""),
+                "evidence": candidate.get("evidence", []),
+                "claim_ids": candidate.get("claim_ids", []),
+                "source_item_ids": candidate.get("source_item_ids", []),
+                "news_links": candidate.get("news_links", []),
+            }
+        )
+    return bindings
 
 
 def _event_payload(
@@ -569,6 +604,11 @@ def _event_payload(
             "chain_steps": [],
             "direction": "unknown",
             "reasoning": "",
+            "demand_driver": "",
+            "bottleneck": "",
+            "supporting_evidence": [],
+            "counter_evidence": [],
+            "downgrade_conditions": [],
         }
         candidates: list[dict[str, Any]] = []
     else:
@@ -592,8 +632,13 @@ def _event_payload(
             "chain_steps": list(chain.chain_steps),
             "direction": chain.impact_direction,
             "reasoning": chain.reasoning,
+            "demand_driver": chain.demand_driver,
+            "bottleneck": chain.bottleneck,
+            "supporting_evidence": list(chain.supporting_evidence),
+            "counter_evidence": list(chain.counter_evidence),
+            "downgrade_conditions": list(chain.downgrade_conditions),
         }
-        candidates = _event_candidates(report, routed, event_id)
+        candidates = _event_candidates(report, routed, event_id, event.items)
 
     assessments = routed.assessments if routed is not None else ()
     _attach_candidate_horizons(candidates, assessments)
@@ -679,6 +724,7 @@ def _candidate_groups(
                     ),
                     event.items[0].published_at,
                     impact,
+                    tuple(event.items),
                 )
             )
 
@@ -731,6 +777,7 @@ def _attach_assessment_fields(
                         "analysis_tier": "deterministic",
                         "feature_breakdown": {},
                         "reason_codes": ["assessment:missing"],
+                        "score_status": "insufficient_evidence",
                         "positive_horizon": None,
                         "negative_horizon": None,
                     }
@@ -771,6 +818,11 @@ def _attach_assessment_fields(
                     },
                     "reason_codes": _unique(
                         reason for assessment in assessments for reason in assessment.reason_codes
+                    ),
+                    "score_status": (
+                        "scored"
+                        if any(_assessment_score_eligible(item) for item in assessments)
+                        else "insufficient_evidence"
                     ),
                     "positive_horizon": _directional_horizon_payload(
                         positive.positive_horizon
@@ -868,22 +920,43 @@ def _event_candidates(
     report: ResearchReport | None,
     routed: RoutedAnalysis | None,
     event_id: str,
+    news_items: Sequence[NewsItem],
 ) -> list[dict[str, Any]]:
     if report is None:
         return []
     impacts = {impact.symbol: impact for impact in report.stock_impacts}
     if routed is None:
-        return [
-            _impact_payload(impact, [event_id])
-            for impact in report.stock_impacts
-            if impact.market == "A股"
-        ]
+        candidates = []
+        for impact in report.stock_impacts:
+            if impact.market != "A股":
+                continue
+            payload = _impact_payload(impact, [event_id])
+            payload["news_links"] = _news_link_payload(news_items)
+            candidates.append(payload)
+        return candidates
     candidates: list[dict[str, Any]] = []
+    ledgers = {
+        ledger.symbol: ledger
+        for ledger in getattr(routed, "ledgers", ())
+        if ledger.symbol
+    }
     for assessment in routed.assessments:
         impact = impacts.get(assessment.symbol)
         if impact is None or impact.market != "A股":
             continue
         payload = _impact_payload(impact, [event_id])
+        ledger = ledgers.get(assessment.symbol)
+        source_item_ids = (
+            list(
+                dict.fromkeys(
+                    item_id
+                    for claim in ledger.claims
+                    for item_id in claim.source_item_ids
+                )
+            )
+            if ledger is not None
+            else []
+        )
         payload.update(
             {
                 "impact_direction": assessment.direction,
@@ -901,10 +974,60 @@ def _event_candidates(
                     "confidence": _confidence_feature_payload(assessment),
                 },
                 "reason_codes": list(assessment.reason_codes),
+                "score_status": (
+                    "scored"
+                    if _assessment_score_eligible(assessment)
+                    else "insufficient_evidence"
+                ),
+                "claim_ids": (
+                    list(dict.fromkeys(claim.id for claim in ledger.claims))
+                    if ledger is not None
+                    else []
+                ),
+                "source_item_ids": source_item_ids,
+                "news_links": _news_link_payload(news_items, source_item_ids),
             }
         )
         candidates.append(payload)
     return candidates
+
+
+def _news_link_payload(
+    items: Iterable[NewsItem],
+    source_item_ids: Sequence[str] = (),
+) -> list[dict[str, str]]:
+    from .claim_pipeline import stable_news_item_id
+
+    allowed = set(source_item_ids)
+    links: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in items:
+        if allowed and stable_news_item_id(item) not in allowed:
+            continue
+        if not item.url or item.url in seen_urls:
+            continue
+        seen_urls.add(item.url)
+        links.append(
+            {
+                "headline": item.headline,
+                "source": item.source,
+                "url": item.url,
+                "published_at": item.published_at,
+            }
+        )
+    return links
+
+
+def _assessment_score_eligible(assessment: ImpactAssessment) -> bool:
+    directional = assessment.positive_features or assessment.negative_features
+    if directional is None:
+        return False
+    return (
+        "directness:official_announcement" in directional.directness.reason_codes
+        or directional.exposure.value > 20
+        or directional.economic_scale.value > 30
+        or directional.sensitivity.value > 60
+    )
 
 
 def _confidence_label(value: int) -> str:
@@ -1146,6 +1269,9 @@ def _aggregate_candidate(
             "impact_direction": combine_impact_directions(directions),
             "impact_score": round(sum(scores) / len(scores)) if scores else None,
             "confidence": strongest_confidence(context.impact.confidence for context in relevant),
+            "news_links": _news_link_payload(
+                item for context in contexts for item in context.news_items
+            ),
         }
     )
     return payload, status

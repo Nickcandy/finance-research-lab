@@ -22,7 +22,6 @@ _NON_STOCK_SUBJECTS = (
     "创业板指",
     "科创50",
     "综指",
-    "港股",
     "期货",
     "现货",
     "主力合约",
@@ -31,10 +30,13 @@ _NON_STOCK_SUBJECTS = (
     "黄金",
     "白银",
     "原油",
+    "油价",
+    "两油",
     "国债",
     "债券",
     "收益率",
 )
+_SECTOR_MOVE_MARKERS = ("股持续", "股集体", "股多数")
 _CAUSE_MARKERS = (
     "消息面",
     "由于",
@@ -63,6 +65,17 @@ _CAUSE_MARKERS = (
     "扭亏",
     "获批",
     "合作",
+    "签署",
+    "发布",
+    "推出",
+    "投产",
+    "扩产",
+    "认证",
+    "客户",
+    "营收",
+    "净利润",
+    "分红",
+    "融资",
     "终止上市",
     "退市",
 )
@@ -96,7 +109,9 @@ def news_item_exclusion_reason(item: NewsItem) -> str:
     combined = f"{headline}。{body}" if body else headline
     if not _MOVE_RE.search(headline):
         return ""
-    if any(subject in headline for subject in _NON_STOCK_SUBJECTS):
+    if any(subject in headline for subject in _NON_STOCK_SUBJECTS) or any(
+        marker in headline for marker in _SECTOR_MOVE_MARKERS
+    ):
         return ""
     if any(marker in combined for marker in _CAUSE_MARKERS):
         return ""

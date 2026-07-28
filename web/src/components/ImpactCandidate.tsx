@@ -4,6 +4,7 @@ import type {
   ScoredRadarCandidate,
   StockFeatureBreakdown,
 } from "../types/radar";
+import { StockActions } from "./StockActions";
 
 const tierLabels = {
   pro: "Pro 深度分析",
@@ -35,14 +36,23 @@ export function ImpactCandidate({ candidate }: { candidate: ScoredRadarCandidate
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold tabular-nums">
-          <span className="text-brand">正向 {candidate.positive_magnitude}</span>
-          <span className="text-risk">负向 {candidate.negative_magnitude}</span>
+          {candidate.score_status === "insufficient_evidence" ? (
+            <span className="text-ink-muted">待验证 · 暂不评分</span>
+          ) : (
+            <>
+              <span className="text-brand">正向 {candidate.positive_magnitude}</span>
+              <span className="text-risk">负向 {candidate.negative_magnitude}</span>
+            </>
+          )}
           <ChevronDown className="size-4 text-ink-muted transition group-open:rotate-180" />
         </div>
       </summary>
       <div className="grid gap-3 pb-3 sm:grid-cols-2">
         <FeatureSection title="正向特征" features={positiveFeatures} />
         <FeatureSection title="负向特征" features={negativeFeatures} />
+      </div>
+      <div className="pb-3">
+        <StockActions symbol={candidate.symbol} watchlistHit={candidate.watchlist_hit} newsLinks={candidate.news_links} />
       </div>
     </details>
   );

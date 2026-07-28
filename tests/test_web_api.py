@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from finance_research_lab.web_api import create_server
+from finance_research_lab.web_api import AnalysisConfig, create_server
 from finance_research_lab.daily_radar_snapshot import build_daily_radar_snapshot, write_daily_radar_snapshot
 from finance_research_lab.event_analysis import generate_event_analysis, write_event_analysis
 from finance_research_lab.event_catalog import event_catalog_path, write_event_catalog
@@ -78,6 +78,82 @@ def test_latest_radar_rejects_non_utf8_snapshot(tmp_path) -> None:
 
     assert status == 500
     assert payload["error"] == "invalid_radar_snapshot"
+
+
+def test_generate_radar_runs_workflow_and_returns_latest_snapshot(tmp_path, monkeypatch) -> None:
+    snapshot_path = tmp_path / "daily-radar.json"
+
+    def fake_generate(config):
+        snapshot_path.write_text(json.dumps(_snapshot()), encoding="utf-8")
+        return {"status": "succeeded", "run_id": "run-1"}
+
+    monkeypatch.setattr("finance_research_lab.web_api._generate_daily_radar", fake_generate)
+    with _running_server(snapshot_path) as base_url:
+        status, payload = _request_json(
+            f"{base_url}/api/radars/generate",
+            method="POST",
+        )
+
+    assert status == 200
+    assert payload == {"status": "succeeded", "run_id": "run-1"}
+
+
+def test_generate_radar_rejects_a_second_concurrent_request(tmp_path, monkeypatch) -> None:
+    snapshot_path = tmp_path / "daily-radar.json"
+    started = Event()
+    release = Event()
+
+    def blocking_generate(config):
+        started.set()
+        release.wait(timeout=2)
+        return {"status": "succeeded", "run_id": "run-1"}
+
+    monkeypatch.setattr("finance_research_lab.web_api._generate_daily_radar", blocking_generate)
+    with _running_server(snapshot_path) as base_url:
+        first = Thread(
+            target=lambda: _request_json(f"{base_url}/api/radars/generate", method="POST"),
+            daemon=True,
+        )
+        first.start()
+        assert started.wait(timeout=1)
+        second_status, payload = _request_error(
+            f"{base_url}/api/radars/generate",
+            method="POST",
+        )
+        release.set()
+        first.join(timeout=2)
+
+    assert second_status == 409
+    assert payload["error"] == "radar_generation_in_progress"
+
+
+def test_watchlist_api_searches_adds_lists_and_deletes(tmp_path) -> None:
+    watchlist = tmp_path / "watchlist.csv"
+    universe = tmp_path / "universe.csv"
+    watchlist.write_text("symbol,name,market,themes,thesis,risks\n", encoding="utf-8")
+    universe.write_text(
+        "symbol,name,market,industry,themes,business_summary,source\n"
+        "300308.SZ,中际旭创,A股,通信,AI;光模块,光模块,cache\n",
+        encoding="utf-8",
+    )
+    config = AnalysisConfig(watchlist_path=watchlist, a_share_universe_path=universe)
+
+    with _running_server(tmp_path / "radar.json", config=config) as base_url:
+        assert _get_json(f"{base_url}/api/stocks/search?q=%E4%B8%AD%E9%99%85")["items"][0]["symbol"] == "300308.SZ"
+        status, added = _request_json(
+            f"{base_url}/api/watchlist",
+            method="POST",
+            body={"symbol": "300308.SZ"},
+        )
+        assert status == 201
+        assert added["name"] == "中际旭创"
+        assert _get_json(f"{base_url}/api/watchlist")["items"][0]["symbol"] == "300308.SZ"
+        status, removed = _request_json(
+            f"{base_url}/api/watchlist/300308.SZ",
+            method="DELETE",
+        )
+        assert status == 200
+        assert removed["symbol"] == "300308.SZ"
 
 
 def test_event_analysis_runs_in_background_and_serves_markdown(tmp_path, monkeypatch) -> None:
@@ -228,8 +304,8 @@ def test_event_analysis_rejects_a_second_concurrent_event(tmp_path, monkeypatch)
 
 
 @contextmanager
-def _running_server(snapshot_path):
-    server = create_server("127.0.0.1", 0, snapshot_path)
+def _running_server(snapshot_path, *, config=None):
+    server = create_server("127.0.0.1", 0, snapshot_path, analysis_config=config)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
@@ -255,8 +331,10 @@ def _get_error(url: str) -> tuple[int, dict[str, object]]:
     return response.code, json.loads(response.read().decode("utf-8"))
 
 
-def _request_json(url: str, *, method: str = "GET") -> tuple[int, dict[str, object]]:
-    with urlopen(Request(url, method=method), timeout=2) as response:
+def _request_json(url: str, *, method: str = "GET", body=None) -> tuple[int, dict[str, object]]:
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {"Content-Type": "application/json"} if data is not None else {}
+    with urlopen(Request(url, method=method, data=data, headers=headers), timeout=2) as response:
         return response.status, json.loads(response.read().decode("utf-8"))
 
 

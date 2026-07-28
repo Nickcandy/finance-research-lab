@@ -15,7 +15,7 @@ export function AllEventsPage() {
     const term = keyword.trim().toLocaleLowerCase();
     if (!term) return query.data?.all_events ?? [];
     return (query.data?.all_events ?? []).filter((event) =>
-      [event.title, ...event.items.map((item) => item.headline), ...event.sources.map((source) => source.name)]
+      [event.title, ...event.items.map((item) => item.headline), ...event.sources.map((source) => source.name), ...(event.related_stocks ?? []).flatMap((stock) => [stock.symbol, stock.name])]
         .some((value) => value.toLocaleLowerCase().includes(term)),
     );
   }, [keyword, query.data]);

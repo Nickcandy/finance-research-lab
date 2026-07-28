@@ -1,6 +1,7 @@
 import { ArrowRight, CheckCircle2, CircleDashed, Clock3, XCircle } from "lucide-react";
 import type { RadarEventSummary } from "../types/radar";
 import { formatDateTime } from "../utils/format";
+import { StockActions } from "./StockActions";
 
 interface EventListItemProps {
   event: RadarEventSummary;
@@ -17,6 +18,7 @@ const statusText = {
 } as const;
 
 export function EventListItem({ event, core }: EventListItemProps) {
+  const relatedStocks = event.related_stocks ?? [];
   const StatusIcon = event.analysis_status === "succeeded"
     ? CheckCircle2
     : event.analysis_status === "failed"
@@ -38,6 +40,16 @@ export function EventListItem({ event, core }: EventListItemProps) {
             {core && <span className="rounded-full bg-brand-soft px-2 py-0.5 font-semibold text-brand">核心事件</span>}
           </div>
           <h2 className="mt-2 break-all text-base font-semibold leading-6 text-ink">{event.title}</h2>
+          {relatedStocks.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {relatedStocks.map((stock) => (
+                <div key={stock.symbol} title={stock.reasoning} className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-brand/20 bg-brand-soft px-2.5 py-1 text-[11px] font-semibold text-brand">
+                  {stock.name} · {stock.symbol}
+                  <StockActions symbol={stock.symbol} watchlistHit={stock.watchlist_hit ?? false} newsLinks={stock.news_links} compact />
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <span className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
               <StatusIcon className="size-3.5" />{statusText[event.analysis_status]}

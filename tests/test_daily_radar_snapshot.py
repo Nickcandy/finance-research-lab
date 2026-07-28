@@ -158,8 +158,23 @@ def test_build_daily_radar_snapshot_exposes_stable_frontend_contract() -> None:
     assert event_payload["candidates"][0]["impact_direction"] == "positive"
     assert event_payload["candidates"][0]["impact_score"] == 80
     assert event_payload["candidates"][0]["confidence"] == "high"
+    assert event_payload["candidates"][0]["news_links"] == [
+        {
+            "headline": "AI 数据中心扩产",
+            "source": "同花顺财经",
+            "url": "https://example.com/ai-1",
+            "published_at": "2026-07-16T11:30:00+08:00",
+        },
+        {
+            "headline": "AI 数据中心扩产获确认",
+            "source": "公司公告",
+            "url": "https://example.com/ai-2",
+            "published_at": "2026-07-16T10:30:00+08:00",
+        },
+    ]
     assert event_payload["warnings"] == ["market fallback: primary source unavailable"]
     assert snapshot["candidate_groups"]["verified"][0]["symbol"] == "300308.SZ"
+    assert snapshot["candidate_groups"]["verified"][0]["news_links"][0]["url"] == "https://example.com/ai-1"
     assert snapshot["candidate_groups"]["watchlist"][0]["symbol"] == "300308.SZ"
     assert snapshot["alerts"] == []
     assert snapshot["research_candidates"][0]["symbol"] == "300308.SZ"
@@ -465,6 +480,8 @@ def test_snapshot_v23_exposes_routes_and_keeps_max_positive_and_negative() -> No
     assert snapshot["events"][0]["analysis_tier"] == "pro"
     assert snapshot["events"][0]["event_importance"] == positive.event_importance
     assert snapshot["events"][0]["impact_score"] == 82
+    assert snapshot["events"][0]["candidates"][0]["score_status"] == "scored"
+    assert snapshot["all_events"][0]["related_stocks"][0]["symbol"] == "300308.SZ"
     assert snapshot["events"][1]["impact_score"] == -71
     assert snapshot["events"][0]["warnings"] == [
         "部分新闻事实由规则降级提取，置信度上限为 35，请核验原始来源。"
@@ -477,6 +494,7 @@ def test_snapshot_v23_exposes_routes_and_keeps_max_positive_and_negative() -> No
     assert candidate["conflict_score"] == 0
     assert candidate["priority_level"] == "critical"
     assert candidate["analysis_tier"] == "pro"
+    assert candidate["score_status"] == "scored"
     assert candidate["impact_direction"] == "mixed"
     assert candidate["impact_score"] is None
     assert candidate["feature_breakdown"]["positive"]["directness"]["value"] == 82

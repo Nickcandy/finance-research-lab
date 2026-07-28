@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -19,6 +19,7 @@ function renderPage(path = "/today") {
 
 describe("TodayPage", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -68,6 +69,10 @@ describe("TodayPage", () => {
     expect(within(verifiedGroup!).getByText("置信度：88")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("正向周期：长期")).toBeInTheDocument();
     await user.click(within(verifiedGroup!).getByText("宁德时代"));
+    expect(within(verifiedGroup!).getByRole("link", { name: "动力电池出口保持增长" })).toHaveAttribute(
+      "href",
+      "https://example.com/?event=battery",
+    );
     expect(within(verifiedGroup!).getByText(/贸易政策变化/)).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText("市场反应：短期（6～20个交易日）")).toBeInTheDocument();
     expect(within(verifiedGroup!).getByText(/市场层依据：/)).toBeInTheDocument();
@@ -112,6 +117,29 @@ describe("TodayPage", () => {
     await user.click(screen.getByRole("button", { name: "重新读取" }));
     expect(await screen.findByRole("heading", { name: "今日研究雷达" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables generation and displays its elapsed runtime", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        apiResponse({ error: "invalid_radar_snapshot", message: "旧版日报" }, 500),
+      )
+      .mockReturnValueOnce(new Promise(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: "重新生成日报" });
+    fireEvent.click(button);
+
+    expect(await screen.findByRole("button", { name: /生成中 · 已运行 00:00/ })).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /生成中 · 已运行 00:01/ })).toBeDisabled();
+    }, { timeout: 1500 });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/radars/generate",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("rejects a v2.1 snapshot with a clear version error", async () => {
@@ -168,6 +196,47 @@ describe("TodayPage", () => {
 
     expect(await screen.findByText("未识别到可验证价值链")).toBeInTheDocument();
     expect(screen.getByText("没有可审计的图谱关系")).toBeInTheDocument();
+  });
+
+  it("links an impacted stock to its news and adds it to the watchlist", async () => {
+    const candidate = {
+      ...fixture.candidate_groups.unverified[0]!,
+      news_links: [{
+        headline: "光模块订单获得客户确认",
+        source: "公司公告",
+        url: "https://example.com/stock-evidence",
+        published_at: "2026-07-16T10:00:00+08:00",
+      }],
+    };
+    const linkedFixture = {
+      ...fixture,
+      candidate_groups: {
+        ...fixture.candidate_groups,
+        unverified: [candidate],
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => (
+      Promise.resolve(apiResponse(init?.method === "POST" ? candidate : linkedFixture, init?.method === "POST" ? 201 : 200))
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderPage();
+
+    const queue = (await screen.findByRole("heading", { name: "待确认候选" })).closest("section");
+    expect(queue).not.toBeNull();
+    const row = within(queue!).getByText(candidate.name).closest("details");
+    expect(row).not.toBeNull();
+    await user.click(within(row!).getByText(candidate.name));
+    expect(within(row!).getByRole("link", { name: /光模块订单获得客户确认/ })).toHaveAttribute(
+      "href",
+      "https://example.com/stock-evidence",
+    );
+    await user.click(within(row!).getByRole("button", { name: "加入待选池" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/watchlist",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ symbol: candidate.symbol }) }),
+    );
+    expect(await within(row!).findByRole("button", { name: "已在待选池" })).toBeDisabled();
   });
 });
 
@@ -281,6 +350,35 @@ describe("event catalog pages", () => {
     expect(await screen.findByText("纯行情播报，不进入事件分析")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /分析/ })).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("watchlist page", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("searches, adds, and removes watchlist stocks", async () => {
+    let items = [{ symbol: "300308.SZ", name: "中际旭创", market: "A股", industry: "通信", themes: ["光模块"], thesis: "", risks: "" }];
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/stocks/search")) return Promise.resolve(apiResponse({ items: [{ symbol: "300502.SZ", name: "新易盛", market: "A股", industry: "通信", themes: ["光模块"] }] }));
+      if (url === "/api/watchlist" && init?.method === "POST") {
+        items = [...items, { symbol: "300502.SZ", name: "新易盛", market: "A股", industry: "通信", themes: ["光模块"], thesis: "", risks: "" }];
+        return Promise.resolve(apiResponse(items[1], 201));
+      }
+      if (url.startsWith("/api/watchlist/") && init?.method === "DELETE") return Promise.resolve(apiResponse(items[0]));
+      return Promise.resolve(apiResponse({ items }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    const user = userEvent.setup();
+    renderPage("/watchlist");
+
+    expect(await screen.findByRole("heading", { name: "观察池管理" })).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText("输入股票代码或名称"), "新易盛");
+    await user.click(await screen.findByRole("button", { name: "加入" }));
+    expect(await screen.findByText(/300502.SZ/)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "删除" })[0]!);
+    expect(fetchMock).toHaveBeenCalledWith("/api/watchlist/300308.SZ", expect.objectContaining({ method: "DELETE" }));
   });
 });
 

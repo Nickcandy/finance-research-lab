@@ -1,4 +1,4 @@
-import { Activity, BookOpenText, CircleDot, Clock3, FlaskConical, ListTree } from "lucide-react";
+import { Activity, BookOpenText, CircleDot, Clock3, FlaskConical, ListTree, Star } from "lucide-react";
 
 export function Sidebar() {
   const path = window.location.pathname;
@@ -29,6 +29,14 @@ export function Sidebar() {
         >
           <ListTree className="size-4" aria-hidden="true" />
           全部事件
+        </a>
+        <a
+          href="/watchlist"
+          aria-current={path === "/watchlist" ? "page" : undefined}
+          className={`mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold ${path === "/watchlist" ? "bg-brand" : "text-sidebar-muted"}`}
+        >
+          <Star className="size-4" aria-hidden="true" />
+          观察池
         </a>
         <span className="mt-1 flex cursor-not-allowed items-center gap-3 rounded-xl px-3 py-3 text-sm text-sidebar-muted">
           <Clock3 className="size-4" aria-hidden="true" />

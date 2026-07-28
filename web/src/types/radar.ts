@@ -72,6 +72,11 @@ export interface ValueChain {
   chain_steps: string[];
   direction: string;
   reasoning: string;
+  demand_driver?: string;
+  bottleneck?: string;
+  supporting_evidence?: string[];
+  counter_evidence?: string[];
+  downgrade_conditions?: string[];
 }
 
 export interface RadarCandidate {
@@ -92,6 +97,8 @@ export interface RadarCandidate {
   reasoning: string;
   evidence: string[];
   risks: string[];
+  news_links?: NewsLink[];
+  score_status?: "scored" | "insufficient_evidence";
   positive_horizon: DirectionalHorizons | null;
   negative_horizon: DirectionalHorizons | null;
 }
@@ -203,6 +210,27 @@ export interface RadarEventSummary {
   items: RadarEventItem[];
   analysis_status: AnalysisStatus;
   exclusion_reason: EventExclusionReason;
+  related_stocks?: StockBinding[];
+}
+
+export interface StockBinding {
+  symbol: string;
+  name: string;
+  relation_type: "explicit_company" | "explicit_symbol" | "value_chain" | "theme_only" | "unverified";
+  verification_status: VerificationStatus;
+  watchlist_hit?: boolean;
+  reasoning: string;
+  evidence: string[];
+  claim_ids: string[];
+  source_item_ids: string[];
+  news_links?: NewsLink[];
+}
+
+export interface NewsLink {
+  headline: string;
+  source: string;
+  url: string;
+  published_at: string;
 }
 
 export interface EventAnalysisResponse {

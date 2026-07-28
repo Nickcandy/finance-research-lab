@@ -3,6 +3,7 @@ import type { ImpactStrength, RadarCandidate, ScoredRadarCandidate } from "../ty
 import { ImpactBadge } from "./ImpactBadge";
 import { HorizonBadges, HorizonDetails } from "./ImpactHorizon";
 import { StatusBadge } from "./StatusBadge";
+import { StockActions } from "./StockActions";
 
 interface CandidateRowProps {
   candidate: RadarCandidate | ScoredRadarCandidate;
@@ -26,6 +27,7 @@ const impactStrengthLabels: Record<ImpactStrength, string> = {
 
 export function CandidateRow({ candidate, compact = false }: CandidateRowProps) {
   const scored = "positive_magnitude" in candidate;
+  const scoreEligible = candidate.score_status !== "insufficient_evidence";
   return (
     <details className="group border-b border-line last:border-b-0">
       <summary className="flex cursor-pointer list-none items-start gap-3 py-3.5">
@@ -44,12 +46,14 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <ImpactBadge kind="direction" value={candidate.impact_direction} />
-            {scored ? (
+            {scored && scoreEligible ? (
               <>
                 <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-semibold text-brand">正向 {candidate.positive_magnitude}</span>
                 <span className="rounded-full bg-risk-soft px-2.5 py-1 text-[11px] font-semibold text-risk">负向 {candidate.negative_magnitude}</span>
               </>
-            ) : <ImpactBadge kind="score" value={candidate.impact_score} />}
+            ) : scoreEligible ? <ImpactBadge kind="score" value={candidate.impact_score} /> : (
+              <span className="rounded-full border border-line bg-surface-muted px-2.5 py-1 text-[11px] font-semibold text-ink-muted">待验证 · 暂不评分</span>
+            )}
             {typeof candidate.confidence === "number"
               ? <span className="rounded-full border border-info/20 bg-info-soft px-2.5 py-1 text-[11px] font-semibold text-info">置信度：{candidate.confidence}</span>
               : <ImpactBadge kind="confidence" value={candidate.confidence} />}
@@ -66,6 +70,7 @@ export function CandidateRow({ candidate, compact = false }: CandidateRowProps) 
           </div>
           <p className="mt-3">{candidate.reasoning || "暂无研究理由"}</p>
           {candidate.verification_source && <p className="mt-2 text-brand">证据源：{candidate.verification_source}</p>}
+          <StockActions symbol={candidate.symbol} watchlistHit={candidate.watchlist_hit} newsLinks={candidate.news_links} />
           <HorizonDetails positive={candidate.positive_horizon} negative={candidate.negative_horizon} />
           {candidate.risks.length > 0 && (
             <div className="mt-3 flex gap-2 rounded-lg bg-risk-soft px-3 py-2 text-risk">

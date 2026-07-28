@@ -1,4 +1,5 @@
 import { AlertCircle, FileSearch, RefreshCcw, TerminalSquare } from "lucide-react";
+import { GenerateRadarButton } from "./GenerateRadarButton";
 
 export function LoadingState() {
   return (
@@ -27,24 +28,38 @@ export function LoadingState() {
 interface ErrorStateProps {
   message: string;
   onRetry: () => void;
+  onGenerate?: () => void;
+  generating?: boolean;
+  generationElapsed?: number;
+  generationError?: string;
 }
 
-export function ErrorState({ message, onRetry }: ErrorStateProps) {
+export function ErrorState({ message, onRetry, onGenerate, generating = false, generationElapsed = 0, generationError }: ErrorStateProps) {
   return (
     <div className="mx-auto flex min-h-[78vh] max-w-xl items-center px-5 py-12">
       <section className="w-full rounded-2xl border border-risk/20 bg-surface p-7 text-center shadow-panel sm:p-10">
         <div className="mx-auto grid size-12 place-items-center rounded-full bg-risk-soft text-risk"><AlertCircle className="size-5" /></div>
         <h1 className="mt-5 text-xl font-semibold">日报暂时无法加载</h1>
         <p className="mt-2 text-sm leading-6 text-ink-muted">{message}</p>
-        <button type="button" onClick={onRetry} className="mt-6 inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white hover:bg-brand/90">
-          <RefreshCcw className="size-4" />重新读取
-        </button>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          <button type="button" onClick={onRetry} disabled={generating} className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-semibold text-ink hover:text-brand disabled:opacity-60">
+            <RefreshCcw className="size-4" />重新读取
+          </button>
+          {onGenerate && <GenerateRadarButton onGenerate={onGenerate} generating={generating} elapsedSeconds={generationElapsed} error={generationError} />}
+        </div>
       </section>
     </div>
   );
 }
 
-export function EmptyState() {
+interface EmptyStateProps {
+  onGenerate?: () => void;
+  generating?: boolean;
+  generationElapsed?: number;
+  generationError?: string;
+}
+
+export function EmptyState({ onGenerate, generating = false, generationElapsed = 0, generationError }: EmptyStateProps) {
   return (
     <div className="mx-auto flex min-h-[78vh] max-w-2xl items-center px-5 py-12">
       <section className="w-full rounded-2xl border border-line bg-surface p-7 text-center shadow-panel sm:p-10">
@@ -55,6 +70,11 @@ export function EmptyState() {
           <TerminalSquare className="mt-0.5 size-4 shrink-0 text-white" />
           <code className="break-all">.venv/bin/finance-lab daily-radar --output reports/daily-radar.md</code>
         </div>
+        {onGenerate && (
+          <div className="mt-6 flex justify-center">
+            <GenerateRadarButton onGenerate={onGenerate} generating={generating} elapsedSeconds={generationElapsed} error={generationError} />
+          </div>
+        )}
       </section>
     </div>
   );

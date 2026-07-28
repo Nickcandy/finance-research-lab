@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowUpRight, Newspaper } from "lucide-react";
 import { CandidateQueue } from "../components/CandidateQueue";
 import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
@@ -11,29 +12,56 @@ import { SummaryStrip } from "../components/SummaryStrip";
 import { ValidationTasks } from "../components/ValidationTasks";
 import { WatchlistAlerts } from "../components/WatchlistAlerts";
 import { loadLatestRadar } from "../data/loadLatestRadar";
+import { generateDailyRadar } from "../data/generateDailyRadar";
 
 export function TodayPage() {
+  const [generationElapsed, setGenerationElapsed] = useState(0);
   const query = useQuery({
     queryKey: ["daily-radar-latest"],
     queryFn: loadLatestRadar,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
+  const generation = useMutation({
+    mutationFn: generateDailyRadar,
+    onSuccess: () => query.refetch(),
+  });
+  useEffect(() => {
+    if (!generation.isPending) return;
+    const timer = window.setInterval(() => {
+      setGenerationElapsed((elapsed) => elapsed + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [generation.isPending]);
+  const generationProps = {
+    onGenerate: () => {
+      setGenerationElapsed(0);
+      generation.mutate();
+    },
+    generating: generation.isPending,
+    generationElapsed,
+    generationError: generation.error?.message,
+  };
 
   if (query.isPending) return <LoadingState />;
   if (query.isError) {
-    return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} />;
+    return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} {...generationProps} />;
   }
 
   const radar = query.data;
-  if (radar === null || radar.events.length === 0) return <EmptyState />;
+  if (radar === null || radar.events.length === 0) return <EmptyState {...generationProps} />;
   const attentionEvents = radar.events.filter(
     (event) => event.analysis_tier === "pro" || event.analysis_tier === "flash" || event.importance_level === "high",
   );
 
   return (
     <div className="mx-auto min-w-0 max-w-[1380px] overflow-x-hidden px-4 py-7 sm:px-7 lg:px-9 lg:py-10">
-      <RadarHeader run={radar.run} onRefresh={() => void query.refetch()} refreshing={query.isFetching} />
+      <RadarHeader
+        run={radar.run}
+        onRefresh={() => void query.refetch()}
+        refreshing={query.isFetching}
+        {...generationProps}
+      />
 
       {radar.run.warnings.length > 0 && (
         <div className="mt-5 flex min-w-0 items-start gap-3 overflow-hidden rounded-xl border border-warning/20 bg-warning-soft px-4 py-3 text-xs leading-5 text-warning">

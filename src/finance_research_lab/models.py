@@ -124,6 +124,11 @@ class ValueChainTrace:
     chain_steps: tuple[str, ...] = field(default_factory=tuple)
     impact_direction: ImpactDirection = "unknown"
     reasoning: str = ""
+    demand_driver: str = ""
+    bottleneck: str = ""
+    supporting_evidence: tuple[str, ...] = field(default_factory=tuple)
+    counter_evidence: tuple[str, ...] = field(default_factory=tuple)
+    downgrade_conditions: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

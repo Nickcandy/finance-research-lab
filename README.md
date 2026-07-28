@@ -190,6 +190,20 @@ finance-lab daily-radar \
 finance-lab serve --host 127.0.0.1 --port 8000
 ```
 
+本地 API 同时提供日报生成和观察池管理：
+
+```text
+POST   /api/radars/generate
+GET    /api/watchlist
+GET    /api/stocks/search?q=中际
+POST   /api/watchlist
+DELETE /api/watchlist/{symbol}
+```
+
+前端 `/watchlist` 支持按股票代码或名称搜索、加入和删除。新增 A 股会从本地
+`data/a_share_universe.csv` 自动补齐名称、行业和主题；观察池只影响提醒与研究排序，
+不限制事件候选范围。
+
 另开一个终端启动前端：
 
 ```bash

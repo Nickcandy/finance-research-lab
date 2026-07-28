@@ -83,6 +83,9 @@ export function EventCard({ event }: EventCardProps) {
             </div>
             )}
             {event.value_chain.reasoning && <p className="mt-2 text-[11px] leading-5 text-ink-muted">{event.value_chain.reasoning}</p>}
+            {event.value_chain.demand_driver && <p className="mt-2 text-[11px] leading-5 text-ink-muted"><strong>需求来源：</strong>{event.value_chain.demand_driver}</p>}
+            {event.value_chain.bottleneck && <p className="mt-1 text-[11px] leading-5 text-ink-muted"><strong>产业链卡点：</strong>{event.value_chain.bottleneck}</p>}
+            {(event.value_chain.downgrade_conditions?.length ?? 0) > 0 && <p className="mt-1 text-[11px] leading-5 text-risk"><strong>降级条件：</strong>{event.value_chain.downgrade_conditions!.join("；")}</p>}
           </div>
 
         {event.warnings.length > 0 && (
