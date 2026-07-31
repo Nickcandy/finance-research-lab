@@ -8,7 +8,7 @@ import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal, Protocol, Sequence, cast
+from typing import Any, Callable, Iterable, Literal, Protocol, Sequence, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .claim_schema import (
@@ -45,6 +45,9 @@ CLAIM_EXTRACTION_SYSTEM_PROMPT = """你是 A 股新闻事实抽取器。你的�
 8. 只返回符合给定 JSON Schema 的 JSON，不要返回 Markdown。"""
 
 BatchStatus = Literal["success", "partial", "fallback"]
+ClaimProgressCallback = Callable[
+    [int, int, tuple[str, ...], tuple[str, ...], tuple[str, ...]], None
+]
 
 
 class StructuredCompletionClient(Protocol):
@@ -135,13 +138,25 @@ class ClaimPipeline:
         self.batch_size = batch_size
         self.body_char_limit = body_char_limit
 
-    def extract(self, events: Sequence[MarketEvent]) -> ClaimPipelineResult:
+    def extract(
+        self,
+        events: Sequence[MarketEvent],
+        *,
+        fallback_content_hashes: Iterable[str] = (),
+        progress: ClaimProgressCallback | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> ClaimPipelineResult:
         groups = _content_groups(events)
         templates: dict[str, tuple[_ClaimTemplate, ...]] = {}
         warnings: list[str] = []
         pending: list[_ContentGroup] = []
         cache_hits = 0
+        fallback_hashes = set(fallback_content_hashes)
+        success_hashes: set[str] = set()
         for group in groups:
+            if group.content_hash in fallback_hashes:
+                templates[group.content_hash] = (_fallback_template(group.representative.item),)
+                continue
             cached, warning = _read_cached_templates(self.cache_dir, group.content_hash)
             if warning:
                 warnings.append(warning)
@@ -149,12 +164,22 @@ class ClaimPipeline:
                 pending.append(group)
                 continue
             templates[group.content_hash] = cached
+            success_hashes.add(group.content_hash)
             cache_hits += 1
 
         batch_results: list[ClaimBatchResult] = []
-        fallback_hashes: set[str] = set()
+        _report_claim_progress(
+            progress, groups, success_hashes, fallback_hashes, ()
+        )
         for batch_index, batch in enumerate(_batches(pending, self.batch_size), start=1):
-            extracted, batch_warnings = self._extract_batch(batch, batch_index)
+            _raise_if_cancelled(should_cancel)
+            active_hashes = tuple(group.content_hash for group in batch)
+            _report_claim_progress(
+                progress, groups, success_hashes, fallback_hashes, active_hashes
+            )
+            extracted, batch_warnings = self._extract_batch(
+                batch, batch_index, should_cancel
+            )
             warnings.extend(batch_warnings)
             missing = []
             for group in batch:
@@ -165,6 +190,7 @@ class ClaimPipeline:
                     templates[group.content_hash] = (_fallback_template(group.representative.item),)
                     continue
                 templates[group.content_hash] = group_templates
+                success_hashes.add(group.content_hash)
                 try:
                     _write_cached_templates(
                         self.cache_dir,
@@ -189,6 +215,9 @@ class ClaimPipeline:
                     claim_count=sum(len(templates[group.content_hash]) for group in batch),
                     status=status,
                 )
+            )
+            _report_claim_progress(
+                progress, groups, success_hashes, fallback_hashes, ()
             )
 
         claims: list[Claim] = []
@@ -223,6 +252,7 @@ class ClaimPipeline:
         self,
         batch: tuple[_ContentGroup, ...],
         batch_index: int,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[dict[str, tuple[_ClaimTemplate, ...]], tuple[str, ...]]:
         if self.client is None:
             return {}, (f"claim batch {batch_index} fallback: LLM client unavailable",)
@@ -230,6 +260,7 @@ class ClaimPipeline:
         extracted: dict[str, tuple[_ClaimTemplate, ...]] = {}
         warnings: list[str] = []
         for attempt in range(2):
+            _raise_if_cancelled(should_cancel)
             try:
                 response = self.client.structured_completion(
                     messages=_claim_messages(pending, self.body_char_limit),
@@ -250,6 +281,29 @@ class ClaimPipeline:
                 continue
             warnings.append(f"claim batch {batch_index} fallback: {error}")
         return extracted, tuple(warnings)
+
+
+def _report_claim_progress(
+    callback: ClaimProgressCallback | None,
+    groups: tuple[_ContentGroup, ...],
+    success_hashes: set[str],
+    fallback_hashes: set[str],
+    active_hashes: tuple[str, ...],
+) -> None:
+    if callback is None:
+        return
+    callback(
+        len(success_hashes | fallback_hashes),
+        len(groups),
+        tuple(sorted(success_hashes)),
+        tuple(sorted(fallback_hashes)),
+        active_hashes,
+    )
+
+
+def _raise_if_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise InterruptedError("radar generation cancelled")
 
 
 def stable_news_item_id(item: NewsItem) -> str:

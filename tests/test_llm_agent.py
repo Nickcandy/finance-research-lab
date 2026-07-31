@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from http.client import IncompleteRead
 from urllib.error import URLError
 from urllib.error import HTTPError
 
@@ -262,9 +263,31 @@ def test_chat_completions_client_records_sent_request_failure(tmp_path) -> None:
             schema={"type": "object"},
             scope_id="event-1",
         )
-
     assert usage.failures[0]["operation"] == "research_report"
     assert usage.failures[0]["scope_id"] == "event-1"
+
+
+def test_chat_completions_client_wraps_incomplete_read(tmp_path) -> None:
+    usage = _UsageRecorder()
+
+    def failing_urlopen(request: object, timeout: int) -> FakeHTTPResponse:
+        del request, timeout
+        raise IncompleteRead(b"{}")
+
+    client = ChatCompletionsClient(
+        api_key="test-key",
+        env_path=tmp_path / "missing.env",
+        urlopen=failing_urlopen,
+        usage_session=usage,
+    )
+
+    with pytest.raises(RuntimeError, match="LLM request failed.*IncompleteRead"):
+        client.structured_completion(
+            messages=[{"role": "user", "content": "{}"}],
+            schema_name="news_claims",
+            schema={"type": "object"},
+        )
+    assert usage.failures[0]["failure_category"] == "transport_error"
 
 
 def test_chat_completions_client_records_invalid_response_without_model_text(tmp_path) -> None:

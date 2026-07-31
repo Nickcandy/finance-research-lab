@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable, Sequence
 
 from .analysis_router import AnalysisRoute, AnalysisRouter
 from .akshare_evidence import AkShareEvidenceProvider
@@ -13,6 +13,7 @@ from .claims import Claim
 from .daily_radar_report import render_daily_event_radar
 from .daily_radar_snapshot import (
     build_daily_radar_snapshot,
+    build_radar_event_payload,
     market_event_id,
     write_daily_radar_snapshot,
 )
@@ -66,6 +67,7 @@ from .point_in_time import (
 from .radar_report import render_opportunity_radar
 from .research_planner import plan_research_tasks
 from .research_agent import analyze_research_report_with_agent
+from .research_report_schema import parse_research_report
 from .tools import (
     fetch_news_tool,
     read_a_share_universe_tool,
@@ -78,6 +80,7 @@ from .tools import (
 DEFAULT_A_SHARE_UNIVERSE_PATH = "data/a_share_universe.example.csv"
 MAX_DAILY_CANDIDATES_PER_EVENT = 3
 MAX_EVENT_RESEARCH_BODY_CHARS = 12_000
+ProgressCallback = Callable[[str, int, int, str, dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -261,6 +264,11 @@ def run_daily_radar_workflow(
     refresh_evidence: bool = False,
     json_output_path: str | Path | None = None,
     llm_client: ChatCompletionsClient | None = None,
+    news_items: Sequence[NewsItem] | None = None,
+    fallback_claim_hashes: Iterable[str] = (),
+    resume_events: dict[str, Any] | None = None,
+    progress: ProgressCallback | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> AgentRun:
     """Discover, cluster, rank, and render the latest 24-hour market events."""
 
@@ -268,16 +276,28 @@ def run_daily_radar_workflow(
     window_end = _shanghai_time(as_of or datetime.now(SHANGHAI))
     window_start = window_end - timedelta(hours=24)
 
-    try:
-        items = ThsNewsSource(event_cache_path).fetch(window_start, window_end)
-    except Exception as exc:
-        fetch_result = ToolResult("ths_global_news", "error", (), str(exc))
+    _raise_if_cancelled(should_cancel)
+    if news_items is not None:
+        fetch_result = ToolResult("ths_global_news", "success", tuple(news_items))
     else:
-        fetch_result = ToolResult("ths_global_news", "success", items)
+        try:
+            items = ThsNewsSource(event_cache_path).fetch(window_start, window_end)
+        except Exception as exc:
+            fetch_result = ToolResult("ths_global_news", "error", (), str(exc))
+        else:
+            fetch_result = ToolResult("ths_global_news", "success", items)
     steps.append(_step("fetch_event_source", fetch_result))
     if fetch_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
+    _emit_progress(
+        progress,
+        "fetch_news",
+        len(fetch_result.output),
+        len(fetch_result.output),
+        "news",
+    )
 
+    _raise_if_cancelled(should_cancel)
     try:
         events = cluster_market_events(fetch_result.output)
     except Exception as exc:
@@ -287,6 +307,13 @@ def run_daily_radar_workflow(
     steps.append(_step("cluster_market_events", cluster_result))
     if cluster_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
+    _emit_progress(
+        progress,
+        "cluster",
+        len(cluster_result.output),
+        len(cluster_result.output),
+        "event",
+    )
 
     try:
         all_ranked_events = (
@@ -321,10 +348,48 @@ def run_daily_radar_workflow(
         return AgentRun("daily_radar", steps, str(output_path))
 
     try:
-        claim_result = ClaimPipeline(
+        def claim_progress(
+            completed: int,
+            total: int,
+            success_hashes: tuple[str, ...],
+            fallback_hashes: tuple[str, ...],
+            active_hashes: tuple[str, ...],
+        ) -> None:
+            _emit_progress(
+                progress,
+                "extract_claims",
+                completed,
+                total,
+                "news",
+                {
+                    "success_hashes": success_hashes,
+                    "fallback_hashes": fallback_hashes,
+                    "active_hashes": active_hashes,
+                },
+            )
+
+        claim_pipeline = ClaimPipeline(
             llm_client,
             Path(evidence_cache_path) / "claims",
-        ).extract(ranked_events)
+        )
+        fallback_claim_hashes = tuple(fallback_claim_hashes)
+        if progress is None and should_cancel is None and not fallback_claim_hashes:
+            claim_result = claim_pipeline.extract(ranked_events)
+        else:
+            claim_result = claim_pipeline.extract(
+                ranked_events,
+                fallback_content_hashes=fallback_claim_hashes,
+                progress=claim_progress,
+                should_cancel=should_cancel,
+            )
+        _raise_if_cancelled(should_cancel)
+        _emit_progress(
+            progress,
+            "score_events",
+            0,
+            len(ranked_events),
+            "event",
+        )
         ledgers = build_evidence_ledgers(
             ranked_events,
             claim_result.claims,
@@ -336,6 +401,8 @@ def run_daily_radar_workflow(
             ledgers,
             universe_result.output,
         )
+    except InterruptedError:
+        raise
     except Exception as exc:
         claim_step_result = ToolResult(
             "score_all_market_events",
@@ -372,7 +439,9 @@ def run_daily_radar_workflow(
     routed_analyses: list[RoutedEventAnalysis] = []
     daily_tool_results: tuple[ToolResult, ...] = ()
     daily_attempted_tools: dict[str, frozenset[str]] = {}
+    resume_events = resume_events or {}
     for index, event in enumerate(rank_result.output, start=1):
+        _raise_if_cancelled(should_cancel)
         event_id = market_event_id(event)
         event_assessments = assessments_by_event.get(event_id, ())
         route = _event_route(router, event_id, event_assessments)
@@ -397,7 +466,24 @@ def run_daily_radar_workflow(
             event_assessments,
             universe_result.output,
         )
-        if route.analysis_tier == "pro":
+        event_steps: tuple[AgentStep, ...] = ()
+        resumed_event = resume_events.get(event_id)
+        if isinstance(resumed_event, dict):
+            report = parse_research_report(resumed_event["report"])
+            event_steps = tuple(
+                AgentStep(
+                    step_name=step["step_name"],
+                    tool_name=step["tool_name"],
+                    status=step["status"],
+                    summary=step["summary"],
+                    warnings=tuple(step.get("warnings", ())),
+                )
+                for step in resumed_event.get("steps", ())
+            )
+            steps.extend(event_steps)
+            fallback = str(resumed_event.get("fallback", ""))
+            warnings = tuple(resumed_event.get("warnings", ()))
+        elif route.analysis_tier == "pro":
             report, daily_tool_results, event_steps, event_warnings = (
                 _analyze_market_event(
                     event,
@@ -448,10 +534,57 @@ def run_daily_radar_workflow(
                 warnings=warnings,
             )
         )
+        if json_output_path is not None:
+            try:
+                write_successful_event_analysis(
+                    event,
+                    report,
+                    event_steps,
+                    warnings,
+                    assessments=event_assessments,
+                    run_id=window_end.strftime("%Y%m%dT%H%M%S%z"),
+                    event_id=event_id,
+                    rank=index,
+                    output_path=event_analysis_path(
+                        json_output_path,
+                        window_end.strftime("%Y%m%dT%H%M%S%z"),
+                        event_id,
+                    ),
+                )
+            except Exception as exc:
+                result = ToolResult("write_event_analysis", "error", "", str(exc))
+                steps.append(_step(f"write_event_analysis:{index}", result))
+                return AgentRun("daily_radar", steps, str(output_path))
+        _emit_progress(
+            progress,
+            "analyze_events",
+            index,
+            len(rank_result.output),
+            "event",
+            {
+                "event_id": event_id,
+                "event": build_radar_event_payload(
+                    event,
+                    report,
+                    event_id,
+                    index,
+                    steps,
+                    event_assessments,
+                ),
+                "resume": {
+                    "report": asdict(report),
+                    "fallback": fallback,
+                    "warnings": list(warnings),
+                    "steps": [asdict(step) for step in event_steps],
+                },
+            },
+        )
 
     if not routed_analyses:
         return AgentRun("daily_radar", steps, str(output_path))
 
+    _raise_if_cancelled(should_cancel)
+    _emit_progress(progress, "finalize", 0, 1, "snapshot")
     try:
         markdown = render_daily_event_radar(
             rank_result.output,
@@ -529,37 +662,11 @@ def run_daily_radar_workflow(
     if pit_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
 
-    try:
-        for index, (event, report) in enumerate(
-            zip(rank_result.output, reports), start=1
-        ):
-            if report is None:
-                continue
-            event_id = snapshot["events"][index - 1]["id"]
-            event_steps = tuple(
-                step for step in steps if step.step_name.endswith(f":{index}")
-            )
-            write_successful_event_analysis(
-                event,
-                report,
-                event_steps,
-                snapshot["events"][index - 1]["warnings"],
-                assessments=routed_analyses[index - 1].assessments,
-                run_id=snapshot["run"]["id"],
-                event_id=event_id,
-                rank=index,
-                output_path=event_analysis_path(
-                    json_output_path, snapshot["run"]["id"], event_id
-                ),
-            )
-    except Exception as exc:
-        analyses_result = ToolResult("write_event_analyses", "error", "", str(exc))
-    else:
-        analyses_result = ToolResult(
-            "write_event_analyses",
-            "success",
-            f"{sum(report is not None for report in reports)} item(s)",
-        )
+    analyses_result = ToolResult(
+        "write_event_analyses",
+        "success",
+        f"{sum(report is not None for report in reports)} item(s)",
+    )
     steps.append(_step("write_event_analyses", analyses_result))
     if analyses_result.status == "error":
         return AgentRun("daily_radar", steps, str(output_path))
@@ -573,7 +680,26 @@ def run_daily_radar_workflow(
             "write_daily_radar_snapshot", "success", str(snapshot_path)
         )
     steps.append(_step("write_snapshot", snapshot_result))
+    if snapshot_result.status == "success":
+        _emit_progress(progress, "finalize", 1, 1, "snapshot")
     return AgentRun("daily_radar", steps, str(output_path))
+
+
+def _emit_progress(
+    callback: ProgressCallback | None,
+    stage: str,
+    completed: int,
+    total: int,
+    unit: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    if callback is not None:
+        callback(stage, completed, total, unit, extra or {})
+
+
+def _raise_if_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise InterruptedError("radar generation cancelled")
 
 
 def _shanghai_time(value: datetime) -> datetime:

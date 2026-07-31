@@ -83,48 +83,133 @@ def test_latest_radar_rejects_non_utf8_snapshot(tmp_path) -> None:
 def test_generate_radar_runs_workflow_and_returns_latest_snapshot(tmp_path, monkeypatch) -> None:
     snapshot_path = tmp_path / "daily-radar.json"
 
-    def fake_generate(config):
+    def fake_generate(config, **kwargs):
+        del config, kwargs
         snapshot_path.write_text(json.dumps(_snapshot()), encoding="utf-8")
         return {"status": "succeeded", "run_id": "run-1"}
 
+    monkeypatch.setattr(
+        "finance_research_lab.web_api.ThsNewsSource.fetch",
+        lambda *args, **kwargs: (),
+    )
     monkeypatch.setattr("finance_research_lab.web_api._generate_daily_radar", fake_generate)
     with _running_server(snapshot_path) as base_url:
         status, payload = _request_json(
             f"{base_url}/api/radars/generate",
             method="POST",
         )
+        completed = _wait_for_generation(base_url)
 
-    assert status == 200
-    assert payload == {"status": "succeeded", "run_id": "run-1"}
+    assert status == 202
+    assert payload["status"] == "queued"
+    assert payload["resumed"] is False
+    assert completed["status"] == "succeeded"
 
 
-def test_generate_radar_rejects_a_second_concurrent_request(tmp_path, monkeypatch) -> None:
+def test_generate_radar_reuses_a_second_concurrent_request(tmp_path, monkeypatch) -> None:
     snapshot_path = tmp_path / "daily-radar.json"
     started = Event()
     release = Event()
 
-    def blocking_generate(config):
+    def blocking_generate(config, **kwargs):
+        del config, kwargs
         started.set()
         release.wait(timeout=2)
         return {"status": "succeeded", "run_id": "run-1"}
 
+    monkeypatch.setattr(
+        "finance_research_lab.web_api.ThsNewsSource.fetch",
+        lambda *args, **kwargs: (),
+    )
     monkeypatch.setattr("finance_research_lab.web_api._generate_daily_radar", blocking_generate)
     with _running_server(snapshot_path) as base_url:
-        first = Thread(
-            target=lambda: _request_json(f"{base_url}/api/radars/generate", method="POST"),
-            daemon=True,
+        first_status, first_payload = _request_json(
+            f"{base_url}/api/radars/generate",
+            method="POST",
         )
-        first.start()
         assert started.wait(timeout=1)
-        second_status, payload = _request_error(
+        second_status, payload = _request_json(
             f"{base_url}/api/radars/generate",
             method="POST",
         )
         release.set()
-        first.join(timeout=2)
+        _wait_for_generation(base_url)
 
-    assert second_status == 409
-    assert payload["error"] == "radar_generation_in_progress"
+    assert first_status == second_status == 202
+    assert payload["run_id"] == first_payload["run_id"]
+
+
+def test_current_radar_returns_not_found_before_generation(tmp_path) -> None:
+    with _running_server(tmp_path / "daily-radar.json") as base_url:
+        status, payload = _get_error(f"{base_url}/api/radars/current")
+
+    assert status == 404
+    assert payload["error"] == "radar_run_not_found"
+
+
+def test_cancelled_generation_is_persisted_and_resumable(tmp_path, monkeypatch) -> None:
+    snapshot_path = tmp_path / "daily-radar.json"
+    started = Event()
+
+    def blocking_generate(config, **kwargs):
+        del config
+        started.set()
+        while not kwargs["should_cancel"]():
+            sleep(0.01)
+        raise InterruptedError("radar generation cancelled")
+
+    monkeypatch.setattr(
+        "finance_research_lab.web_api.ThsNewsSource.fetch",
+        lambda *args, **kwargs: (),
+    )
+    monkeypatch.setattr("finance_research_lab.web_api._generate_daily_radar", blocking_generate)
+    with _running_server(snapshot_path) as base_url:
+        _request_json(f"{base_url}/api/radars/generate", method="POST")
+        assert started.wait(timeout=1)
+        status, _ = _request_json(
+            f"{base_url}/api/radars/current/cancel",
+            method="POST",
+        )
+        stopped = _wait_for_generation(base_url)
+
+    assert status == 202
+    assert stopped["status"] == "interrupted"
+    assert stopped["resumable"] is True
+
+
+def test_failed_generation_resumes_same_input_without_refetching(tmp_path, monkeypatch) -> None:
+    snapshot_path = tmp_path / "daily-radar.json"
+    fetch_calls = 0
+    generate_calls = 0
+
+    def fetch(*args, **kwargs):
+        nonlocal fetch_calls
+        del args, kwargs
+        fetch_calls += 1
+        return ()
+
+    def generate(config, **kwargs):
+        nonlocal generate_calls
+        del config, kwargs
+        generate_calls += 1
+        if generate_calls == 1:
+            raise RuntimeError("provider disconnected")
+        snapshot_path.write_text(json.dumps(_snapshot()), encoding="utf-8")
+        return {"status": "succeeded", "run_id": "run-1"}
+
+    monkeypatch.setattr("finance_research_lab.web_api.ThsNewsSource.fetch", fetch)
+    monkeypatch.setattr("finance_research_lab.web_api._generate_daily_radar", generate)
+    with _running_server(snapshot_path) as base_url:
+        _, first = _request_json(f"{base_url}/api/radars/generate", method="POST")
+        failed = _wait_for_generation(base_url)
+        _, second = _request_json(f"{base_url}/api/radars/generate", method="POST")
+        completed = _wait_for_generation(base_url)
+
+    assert failed["status"] == "failed"
+    assert completed["status"] == "succeeded"
+    assert second["resumed"] is True
+    assert second["run_id"] == first["run_id"]
+    assert fetch_calls == 1
 
 
 def test_watchlist_api_searches_adds_lists_and_deletes(tmp_path) -> None:
@@ -354,6 +439,16 @@ def _wait_for_analysis(base_url: str, event_id: str) -> dict[str, object]:
             return payload
         sleep(0.01)
     raise AssertionError("event analysis did not finish")
+
+
+def _wait_for_generation(base_url: str) -> dict[str, object]:
+    deadline = monotonic() + 2
+    while monotonic() < deadline:
+        payload = _get_json(f"{base_url}/api/radars/current")
+        if payload["status"] not in {"queued", "running"}:
+            return payload
+        sleep(0.01)
+    raise AssertionError("radar generation did not finish")
 
 
 def _write_event_radar(tmp_path) -> tuple[object, str]:

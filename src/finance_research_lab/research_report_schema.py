@@ -161,6 +161,11 @@ def _parse_raw_news(data: dict[str, Any]) -> NewsItem:
         url=_string(data.get("url"), "raw_news.url"),
         published_at=_string(data.get("published_at"), "raw_news.published_at"),
         body=_string(data.get("body"), "raw_news.body"),
+        source_type=_enum(
+            data.get("source_type", "news"),
+            "raw_news.source_type",
+            {"news", "announcement", "market_anomaly", "policy"},
+        ),
     )
 
 
@@ -189,6 +194,17 @@ def _parse_value_chain(data: dict[str, Any]) -> ValueChainTrace:
             IMPACT_DIRECTIONS,
         ),
         reasoning=_string(data.get("reasoning"), "value_chain.reasoning"),
+        demand_driver=_string(data.get("demand_driver", ""), "value_chain.demand_driver"),
+        bottleneck=_string(data.get("bottleneck", ""), "value_chain.bottleneck"),
+        supporting_evidence=tuple(
+            _string_array(data.get("supporting_evidence", []), "value_chain.supporting_evidence")
+        ),
+        counter_evidence=tuple(
+            _string_array(data.get("counter_evidence", []), "value_chain.counter_evidence")
+        ),
+        downgrade_conditions=tuple(
+            _string_array(data.get("downgrade_conditions", []), "value_chain.downgrade_conditions")
+        ),
     )
 
 

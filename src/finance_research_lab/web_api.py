@@ -4,11 +4,12 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -21,8 +22,10 @@ from .event_analysis import (
     write_failed_event_analysis,
 )
 from .event_catalog import InvalidEventCatalog, event_catalog_path, read_event_catalog
+from .event_sources import SHANGHAI, ThsNewsSource
 from .llm.chat_completions_client import ChatCompletionsClient
 from .llm.usage import LLMUsageSession
+from .radar_runs import ACTIVE_STATUSES, RESUMABLE_STATUSES, RadarRunStore
 from .workflow import run_daily_radar_workflow
 from .watchlist_store import WatchlistConflict, WatchlistStore, WatchlistSymbolNotFound
 
@@ -81,17 +84,163 @@ class RadarGenerationService:
         self.config = config
         self._generate = generate or _generate_daily_radar
         self._lock = Lock()
+        self._store = RadarRunStore(config.snapshot_path)
+        self._store.mark_stale_interrupted()
+        self._cancel = Event()
+        self._active_run_id: str | None = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="radar-generation")
 
-    def run(self) -> dict[str, Any]:
-        if not self._lock.acquire(blocking=False):
-            raise RadarGenerationInProgress("daily radar generation is already running")
+    def start(self) -> dict[str, Any]:
+        with self._lock:
+            current = self._store.current()
+            if self._active_run_id is not None:
+                assert current is not None
+                return {
+                    "run_id": self._active_run_id,
+                    "status": current["status"],
+                    "resumed": False,
+                }
+            resumed = bool(current and current.get("status") in RESUMABLE_STATUSES)
+            if resumed:
+                run_id = str(current["run_id"])
+                self._store.update(run_id, status="queued", error="", active_claim_hashes=[])
+            else:
+                window_end = datetime.now(SHANGHAI)
+                current = self._store.create(window_end - timedelta(hours=24), window_end)
+                run_id = str(current["run_id"])
+            self._cancel.clear()
+            self._active_run_id = run_id
+            self._executor.submit(self._run, run_id, resumed)
+            return {"run_id": run_id, "status": "queued", "resumed": resumed}
+
+    def current(self) -> dict[str, Any]:
+        return self._store.public_payload()
+
+    def cancel(self) -> dict[str, Any]:
+        with self._lock:
+            current = self._store.current()
+            if current is None:
+                raise FileNotFoundError("radar run not found")
+            if current.get("status") not in ACTIVE_STATUSES:
+                return self._store.public_payload(current)
+            self._cancel.set()
+            return self._store.public_payload(current)
+
+    def close(self) -> None:
+        self._cancel.set()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _run(self, run_id: str, resumed: bool) -> None:
         try:
-            return self._generate(self.config)
+            checkpoint = self._store.update(run_id, status="running", error="")
+            if resumed:
+                items = self._store.load_input(run_id)
+            else:
+                items = ThsNewsSource(self.config.event_cache_path).fetch(
+                    datetime.fromisoformat(checkpoint["window_start"]),
+                    datetime.fromisoformat(checkpoint["window_end"]),
+                )
+                self._store.save_input(run_id, items)
+                checkpoint = self._store.update(
+                    run_id,
+                    progress={"completed": len(items), "total": len(items), "unit": "news"},
+                )
+            if self._cancel.is_set():
+                raise InterruptedError("radar generation cancelled")
+            fallback_hashes = tuple(
+                content_hash
+                for content_hash, status in checkpoint.get("claim_statuses", {}).items()
+                if status == "fallback"
+            )
+            resume_events = checkpoint.get("event_resume", {})
+            self._generate(
+                self.config,
+                items=items,
+                as_of=datetime.fromisoformat(checkpoint["window_end"]),
+                fallback_claim_hashes=fallback_hashes,
+                resume_events=resume_events,
+                progress=lambda *args: self._progress(run_id, *args),
+                should_cancel=self._cancel.is_set,
+            )
+        except InterruptedError as exc:
+            self._store.update(
+                run_id,
+                status="interrupted",
+                error=str(exc),
+                active_claim_hashes=[],
+            )
+        except Exception as exc:
+            current = self._store.current() or {"stage": "fetch_news"}
+            self._store.update(
+                run_id,
+                status="failed",
+                error=f"{current.get('stage', 'unknown')}: {exc}",
+                active_claim_hashes=[],
+            )
+        else:
+            self._store.update(
+                run_id,
+                status="succeeded",
+                stage="finalize",
+                progress={"completed": 1, "total": 1, "unit": "snapshot"},
+                error="",
+                active_claim_hashes=[],
+            )
         finally:
-            self._lock.release()
+            with self._lock:
+                if self._active_run_id == run_id:
+                    self._active_run_id = None
+
+    def _progress(
+        self,
+        run_id: str,
+        stage: str,
+        completed: int,
+        total: int,
+        unit: str,
+        extra: dict[str, Any],
+    ) -> None:
+        current = self._store.current()
+        if current is None or current.get("run_id") != run_id:
+            return
+        changes: dict[str, Any] = {
+            "stage": stage,
+            "progress": {"completed": completed, "total": total, "unit": unit},
+        }
+        if stage == "extract_claims":
+            statuses = dict(current.get("claim_statuses", {}))
+            statuses.update({value: "succeeded" for value in extra.get("success_hashes", ())})
+            statuses.update({value: "fallback" for value in extra.get("fallback_hashes", ())})
+            changes["claim_statuses"] = statuses
+            changes["active_claim_hashes"] = list(extra.get("active_hashes", ()))
+        event_id = extra.get("event_id")
+        event = extra.get("event")
+        if isinstance(event_id, str) and isinstance(event, dict):
+            event_ids = list(current.get("completed_event_ids", []))
+            partial_events = list(current.get("partial_events", []))
+            if event_id not in event_ids:
+                event_ids.append(event_id)
+                partial_events.append(event)
+            changes["completed_event_ids"] = event_ids
+            changes["partial_events"] = partial_events
+            resume_payload = extra.get("resume")
+            if isinstance(resume_payload, dict):
+                event_resume = dict(current.get("event_resume", {}))
+                event_resume[event_id] = resume_payload
+                changes["event_resume"] = event_resume
+        self._store.update(run_id, **changes)
 
 
-def _generate_daily_radar(config: GenerationConfig) -> dict[str, Any]:
+def _generate_daily_radar(
+    config: GenerationConfig,
+    *,
+    items: tuple[Any, ...],
+    as_of: datetime,
+    fallback_claim_hashes: tuple[str, ...],
+    resume_events: dict[str, Any],
+    progress: Callable[..., None],
+    should_cancel: Callable[[], bool],
+) -> dict[str, Any]:
     client = ChatCompletionsClient(usage_session=LLMUsageSession("daily_radar_web"))
     run = run_daily_radar_workflow(
         output_path=config.markdown_path,
@@ -103,6 +252,12 @@ def _generate_daily_radar(config: GenerationConfig) -> dict[str, Any]:
         refresh_evidence=False,
         json_output_path=config.snapshot_path,
         llm_client=client,
+        news_items=items,
+        as_of=as_of,
+        fallback_claim_hashes=fallback_claim_hashes,
+        resume_events=resume_events,
+        progress=progress,
+        should_cancel=should_cancel,
     )
     if not run.steps or run.steps[-1].status == "error":
         message = run.steps[-1].summary if run.steps else "daily radar generation failed"
@@ -236,6 +391,8 @@ class RadarServer(ThreadingHTTPServer):
     def server_close(self) -> None:
         if hasattr(self, "analysis_service"):
             self.analysis_service.close()
+        if hasattr(self, "generation_service"):
+            self.generation_service.close()
         super().server_close()
 
 
@@ -273,6 +430,9 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/api/radars/latest":
             self._write_latest_radar()
             return
+        if self.path == "/api/radars/current":
+            self._write_current_radar()
+            return
         analysis_match = _EVENT_ANALYSIS_RE.match(self.path)
         if analysis_match:
             self._write_analysis(analysis_match.group(1))
@@ -289,6 +449,9 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/radars/generate":
             self._generate_radar()
+            return
+        if self.path == "/api/radars/current/cancel":
+            self._cancel_radar()
             return
         match = _EVENT_ANALYSIS_RE.match(self.path)
         if not match:
@@ -330,11 +493,32 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
 
     def _generate_radar(self) -> None:
         try:
-            payload = self.generation_service.run()
+            payload = self.generation_service.start()
+        except Exception as exc:
+            self._write_service_error(exc)
+        else:
+            self._write_json(HTTPStatus.ACCEPTED, payload)
+
+    def _write_current_radar(self) -> None:
+        try:
+            payload = self.generation_service.current()
+        except FileNotFoundError:
+            self._write_json(
+                HTTPStatus.NOT_FOUND,
+                {"error": "radar_run_not_found", "message": "Radar run not found"},
+            )
         except Exception as exc:
             self._write_service_error(exc)
         else:
             self._write_json(HTTPStatus.OK, payload)
+
+    def _cancel_radar(self) -> None:
+        try:
+            payload = self.generation_service.cancel()
+        except Exception as exc:
+            self._write_service_error(exc)
+        else:
+            self._write_json(HTTPStatus.ACCEPTED, payload)
 
     def _write_latest_radar(self) -> None:
         try:

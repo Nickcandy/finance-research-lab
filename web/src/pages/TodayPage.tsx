@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowUpRight, Newspaper } from "lucide-react";
 import { CandidateQueue } from "../components/CandidateQueue";
 import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 import { EventCard } from "../components/EventCard";
+import { GenerationProgress } from "../components/GenerationProgress";
 import { ImpactRankings } from "../components/ImpactRankings";
 import { RadarHeader } from "../components/RadarHeader";
 import { RunAudit } from "../components/RunAudit";
@@ -12,44 +13,92 @@ import { SummaryStrip } from "../components/SummaryStrip";
 import { ValidationTasks } from "../components/ValidationTasks";
 import { WatchlistAlerts } from "../components/WatchlistAlerts";
 import { loadLatestRadar } from "../data/loadLatestRadar";
-import { generateDailyRadar } from "../data/generateDailyRadar";
+import {
+  cancelDailyRadar,
+  generateDailyRadar,
+  loadCurrentRadar,
+} from "../data/generateDailyRadar";
 
 export function TodayPage() {
-  const [generationElapsed, setGenerationElapsed] = useState(0);
+  const [clock, setClock] = useState(() => Date.now());
   const query = useQuery({
     queryKey: ["daily-radar-latest"],
     queryFn: loadLatestRadar,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
+  const currentQuery = useQuery({
+    queryKey: ["daily-radar-current"],
+    queryFn: loadCurrentRadar,
+    retry: false,
+    refetchInterval: (current) => {
+      const status = current.state.data?.status;
+      return status === "queued" || status === "running" ? 2000 : false;
+    },
+  });
+  const current = currentQuery.data;
+  const currentActive = current?.status === "queued" || current?.status === "running";
   const generation = useMutation({
     mutationFn: generateDailyRadar,
-    onSuccess: () => query.refetch(),
+    onSuccess: () => currentQuery.refetch(),
+  });
+  const cancellation = useMutation({
+    mutationFn: cancelDailyRadar,
+    onSuccess: () => currentQuery.refetch(),
   });
   useEffect(() => {
-    if (!generation.isPending) return;
+    if (!currentActive) return;
     const timer = window.setInterval(() => {
-      setGenerationElapsed((elapsed) => elapsed + 1);
+      setClock(Date.now());
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [generation.isPending]);
+  }, [currentActive]);
+  const refetchLatest = query.refetch;
+  useEffect(() => {
+    if (current?.status === "succeeded") void refetchLatest();
+  }, [current?.status, refetchLatest]);
+  const generationElapsed = currentActive
+    ? Math.max(0, Math.floor(
+      (clock - new Date(current?.started_at ?? clock).getTime()) / 1000,
+    ))
+    : 0;
   const generationProps = {
     onGenerate: () => {
-      setGenerationElapsed(0);
       generation.mutate();
     },
-    generating: generation.isPending,
+    generating: generation.isPending || currentActive,
     generationElapsed,
-    generationError: generation.error?.message,
+    generationError: generation.error?.message || currentQuery.error?.message,
   };
+  const progress = current ? (
+    <GenerationProgress
+      state={current}
+      onCancel={() => cancellation.mutate()}
+      onResume={() => generation.mutate()}
+      cancelling={cancellation.isPending}
+      resuming={generation.isPending}
+    />
+  ) : null;
 
   if (query.isPending) return <LoadingState />;
   if (query.isError) {
-    return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} {...generationProps} />;
+    return (
+      <>
+        <ErrorState message={query.error.message} onRetry={() => void query.refetch()} {...generationProps} />
+        {progress}
+      </>
+    );
   }
 
   const radar = query.data;
-  if (radar === null || radar.events.length === 0) return <EmptyState {...generationProps} />;
+  if (radar === null || radar.events.length === 0) {
+    return (
+      <>
+        <EmptyState {...generationProps} />
+        {progress}
+      </>
+    );
+  }
   const attentionEvents = radar.events.filter(
     (event) => event.analysis_tier === "pro" || event.analysis_tier === "flash" || event.importance_level === "high",
   );
@@ -62,6 +111,7 @@ export function TodayPage() {
         refreshing={query.isFetching}
         {...generationProps}
       />
+      {progress}
 
       {radar.run.warnings.length > 0 && (
         <div className="mt-5 flex min-w-0 items-start gap-3 overflow-hidden rounded-xl border border-warning/20 bg-warning-soft px-4 py-3 text-xs leading-5 text-warning">

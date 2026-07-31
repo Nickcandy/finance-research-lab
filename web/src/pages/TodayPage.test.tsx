@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -101,12 +101,16 @@ describe("TodayPage", () => {
   });
 
   it("renders an API error and retries the latest snapshot", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        apiResponse({ error: "invalid_radar_snapshot", message: "日报快照格式无效" }, 500),
-      )
-      .mockResolvedValueOnce(apiResponse(fixture));
+    let latestCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/radars/current") {
+        return Promise.resolve(apiResponse({ error: "radar_run_not_found" }, 404));
+      }
+      latestCalls += 1;
+      return Promise.resolve(latestCalls === 1
+        ? apiResponse({ error: "invalid_radar_snapshot", message: "日报快照格式无效" }, 500)
+        : apiResponse(fixture));
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     renderPage();
@@ -116,28 +120,29 @@ describe("TodayPage", () => {
 
     await user.click(screen.getByRole("button", { name: "重新读取" }));
     expect(await screen.findByRole("heading", { name: "今日研究雷达" })).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latestCalls).toBe(2);
   });
 
-  it("disables generation and displays its elapsed runtime", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        apiResponse({ error: "invalid_radar_snapshot", message: "旧版日报" }, 500),
-      )
-      .mockReturnValueOnce(new Promise(() => undefined));
+  it("restores active generation progress and can request cancellation", async () => {
+    const current = generationState("running");
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/radars/latest") return Promise.resolve(apiResponse(fixture));
+      if (url === "/api/radars/current/cancel" && init?.method === "POST") {
+        return Promise.resolve(apiResponse({ ...current, status: "interrupted", resumable: true }, 202));
+      }
+      return Promise.resolve(apiResponse(current));
+    });
     vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
     renderPage();
 
-    const button = await screen.findByRole("button", { name: "重新生成日报" });
-    fireEvent.click(button);
-
-    expect(await screen.findByRole("button", { name: /生成中 · 已运行 00:00/ })).toBeDisabled();
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /生成中 · 已运行 00:01/ })).toBeDisabled();
-    }, { timeout: 1500 });
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "/api/radars/generate",
+    expect(await screen.findByText("提取事实 · 1/2")).toBeInTheDocument();
+    expect(screen.getByText("待分析新闻")).toBeInTheDocument();
+    expect(screen.getByText("已分析新闻")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "停止更新" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/radars/current/cancel",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -387,4 +392,39 @@ function apiResponse(body: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function generationState(status: "queued" | "running" | "interrupted" | "failed" | "succeeded") {
+  return {
+    schema_version: "1.0",
+    run_id: "20260731T120000+0800",
+    status,
+    stage: "extract_claims",
+    window_start: "2026-07-30T12:00:00+08:00",
+    window_end: "2026-07-31T12:00:00+08:00",
+    started_at: "2026-07-31T11:50:00+08:00",
+    updated_at: "2026-07-31T12:00:00+08:00",
+    progress: { completed: 1, total: 2, unit: "news" },
+    error: "",
+    resumable: status === "interrupted" || status === "failed",
+    news: [
+      {
+        item_id: "item_pending",
+        headline: "待分析新闻",
+        source: "同花顺",
+        url: "",
+        published_at: "2026-07-31T11:59:00+08:00",
+        analysis_status: "pending",
+      },
+      {
+        item_id: "item_done",
+        headline: "已分析新闻",
+        source: "同花顺",
+        url: "",
+        published_at: "2026-07-31T11:58:00+08:00",
+        analysis_status: "succeeded",
+      },
+    ],
+    partial_events: [],
+  };
 }

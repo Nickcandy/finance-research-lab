@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from http.client import HTTPException, IncompleteRead
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -90,7 +91,14 @@ class ChatCompletionsClient:
         try:
             with self.urlopen(request, timeout or self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
+        except (
+            IncompleteRead,
+            HTTPException,
+            HTTPError,
+            URLError,
+            OSError,
+            json.JSONDecodeError,
+        ) as exc:
             self._record_failure(schema_name, scope_id, "transport_error")
             raise RuntimeError(f"LLM request failed: {exc}") from exc
 
@@ -170,7 +178,14 @@ class ChatCompletionsClient:
         try:
             with self.urlopen(request, timeout or self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
+        except (
+            IncompleteRead,
+            HTTPException,
+            HTTPError,
+            URLError,
+            OSError,
+            json.JSONDecodeError,
+        ) as exc:
             self._record_failure("evidence_tools", scope_id, "transport_error")
             raise RuntimeError(f"LLM tool request failed: {exc}") from exc
         usage_tokens = _usage(payload)

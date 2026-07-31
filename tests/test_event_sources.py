@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http.client import IncompleteRead
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
@@ -150,6 +151,59 @@ def test_ths_source_reports_http_failure_with_page(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="page 1.*network down"):
         source.fetch(datetime(2026, 7, 13), datetime(2026, 7, 14))
+
+
+def test_ths_source_retries_incomplete_read_once(tmp_path) -> None:
+    calls = 0
+
+    def flaky(request, timeout):
+        nonlocal calls
+        del request, timeout
+        calls += 1
+        if calls == 1:
+            raise IncompleteRead(b"{}")
+        return FakeJSONResponse({"data": {"list": []}})
+
+    source = ThsNewsSource(tmp_path, urlopen=flaky)
+
+    assert source.fetch(datetime(2026, 7, 13), datetime(2026, 7, 14)) == ()
+    assert calls == 2
+
+
+def test_ths_source_merges_incremental_news_and_advances_cursor(tmp_path) -> None:
+    first_pages = {
+        1: [
+            _item("已有新闻", "2026-07-14T11:00:00", "https://example.com/old"),
+            _item("窗口边界", "2026-07-13T11:59:00", "https://example.com/boundary"),
+        ]
+    }
+    ThsNewsSource(
+        tmp_path,
+        urlopen=_urlopen_for_pages(first_pages, []),
+    ).fetch(
+        datetime(2026, 7, 13, 12, tzinfo=SHANGHAI),
+        datetime(2026, 7, 14, 12, tzinfo=SHANGHAI),
+    )
+    second_pages = {
+        1: [
+            _item("新增新闻", "2026-07-14T11:05:00", "https://example.com/new"),
+            _item("已有新闻", "2026-07-14T11:00:00", "https://example.com/old"),
+            _item("重叠记录", "2026-07-14T10:49:00", "https://example.com/overlap"),
+        ]
+    }
+
+    items = ThsNewsSource(
+        tmp_path,
+        urlopen=_urlopen_for_pages(second_pages, []),
+    ).fetch(
+        datetime(2026, 7, 13, 12, tzinfo=SHANGHAI),
+        datetime(2026, 7, 14, 12, 10, tzinfo=SHANGHAI),
+    )
+
+    assert [item.headline for item in items] == ["新增新闻", "已有新闻"]
+    snapshot = json.loads((tmp_path / "2026-07-14.json").read_text(encoding="utf-8"))
+    assert snapshot["cursor"]["published_at"] == "2026-07-14T11:05:00+08:00"
+    assert snapshot["cursor"]["item_id"].startswith("item_")
 
 
 def test_ths_source_fails_at_page_limit_without_overwriting_snapshot(tmp_path) -> None:

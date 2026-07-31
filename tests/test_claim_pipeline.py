@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from finance_research_lab.claim_pipeline import (
     CLAIM_EXTRACTION_SYSTEM_PROMPT,
     ClaimPipeline,
@@ -214,6 +216,33 @@ def test_one_failed_batch_does_not_drop_other_batches(tmp_path) -> None:
         "success",
     ]
     assert result.fallback_count == 1
+
+
+def test_pipeline_resumes_run_scoped_fallback_without_llm_call(tmp_path) -> None:
+    news = _news("断点新闻")
+    client = _Client([])
+    updates = []
+
+    result = ClaimPipeline(client, tmp_path / "claims").extract(
+        (_event(news),),
+        fallback_content_hashes=(news_content_hash(news),),
+        progress=lambda *args: updates.append(args),
+    )
+
+    assert client.calls == []
+    assert result.fallback_count == 1
+    assert updates[-1][0:2] == (1, 1)
+    assert news_content_hash(news) in updates[-1][3]
+
+
+def test_pipeline_honors_cancellation_before_next_batch(tmp_path) -> None:
+    event = _event(_news("取消新闻"))
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        ClaimPipeline(_Client([]), tmp_path / "claims").extract(
+            (event,),
+            should_cancel=lambda: True,
+        )
 
 
 def test_missing_item_in_valid_response_uses_partial_fallback(tmp_path) -> None:

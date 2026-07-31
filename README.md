@@ -194,11 +194,18 @@ finance-lab serve --host 127.0.0.1 --port 8000
 
 ```text
 POST   /api/radars/generate
+GET    /api/radars/current
+POST   /api/radars/current/cancel
 GET    /api/watchlist
 GET    /api/stocks/search?q=中际
 POST   /api/watchlist
 DELETE /api/watchlist/{symbol}
 ```
+
+日报生成接口立即返回 HTTP 202，并在后台串行执行。`/api/radars/current` 提供当前阶段、
+完成数量、已拉取新闻和部分事件结果；重复生成请求复用同一个 run。失败、取消或服务重启后，
+再次调用生成接口会使用固定时间窗口和已保存的 Claim checkpoint 继续运行。只有完整成功的
+run 才会原子替换 `reports/daily-radar.json`。
 
 前端 `/watchlist` 支持按股票代码或名称搜索、加入和删除。新增 A 股会从本地
 `data/a_share_universe.csv` 自动补齐名称、行业和主题；观察池只影响提醒与研究排序，
@@ -216,6 +223,9 @@ corepack pnpm dev
 浏览最近 24 小时全部聚类事件。事件详情页可以后台生成单事件报告，并通过 Markdown 接口查看结果。
 Vite 会把 `/api` 转发到本地 Python 服务；刷新按钮只重新读取最新成功快照。可通过
 `http://127.0.0.1:8000/api/health` 检查 API 和快照是否可用。
+
+同花顺新闻缓存保存最新 `(published_at, item_id)` 游标。新 run 从游标前 10 分钟开始重叠
+抓取并去重，合并为固定的最近 24 小时输入；中断 run 续跑时不会把中断后的新新闻加入原窗口。
 
 `daily-radar` 会对全部可研究事件生成 Claim、证据账本、影响评分和分析路由；只有
 `critical / verify_first / high` 进入 Pro 深度分析，其余走 Flash 或规则摘要。运行同时写入

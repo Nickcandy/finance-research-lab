@@ -272,3 +272,42 @@ export interface RadarSnapshot {
   validation_tasks: ValidationTask[];
   disclaimer: string;
 }
+
+export type RadarGenerationStatus = "queued" | "running" | "interrupted" | "failed" | "succeeded";
+export type RadarGenerationStage =
+  | "fetch_news"
+  | "cluster"
+  | "extract_claims"
+  | "score_events"
+  | "analyze_events"
+  | "finalize";
+export type RadarGenerationNewsStatus = "pending" | "running" | "succeeded" | "fallback";
+
+export interface RadarGenerationNews {
+  item_id: string;
+  headline: string;
+  source: string;
+  url: string;
+  published_at: string;
+  analysis_status: RadarGenerationNewsStatus;
+}
+
+export interface RadarGenerationState {
+  schema_version: "1.0";
+  run_id: string;
+  status: RadarGenerationStatus;
+  stage: RadarGenerationStage;
+  window_start: string;
+  window_end: string;
+  started_at: string;
+  updated_at: string;
+  progress: {
+    completed: number;
+    total: number;
+    unit: string;
+  };
+  error: string;
+  resumable: boolean;
+  news: RadarGenerationNews[];
+  partial_events: RadarEvent[];
+}

@@ -25,6 +25,7 @@ venv/
 /reports/*.json
 /reports/event-catalogs/
 /reports/event-analyses/
+/reports/radar-runs/
 !/reports/.gitkeep
 
 # Frontend
